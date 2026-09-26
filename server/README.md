@@ -1,6 +1,6 @@
-# PTMate Server
+# PT-Mate Server
 
-PTMate应用的后端服务，提供自动更新检查和使用统计功能。
+PT-Mate 应用的后端服务，提供自动更新检查和使用统计功能。
 
 ## 功能特性
 

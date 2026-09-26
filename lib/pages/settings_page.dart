@@ -1270,7 +1270,7 @@ class _ExportLogsTile extends StatelessWidget {
         return;
       }
       await SharePlus.instance.share(
-        ShareParams(files: [XFile(snapshot.path)], text: 'PT Mate 日志'),
+        ShareParams(files: [XFile(snapshot.path)], text: 'PT-Mate 日志'),
       );
     } catch (e) {
       if (!context.mounted) return;

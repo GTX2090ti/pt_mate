@@ -29,7 +29,7 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     PackageInfo.setMockInitialValues(
-      appName: 'PT Mate',
+      appName: 'PT-Mate',
       packageName: 'com.github.justlookatnow.ptmate',
       version: '1.3.0',
       buildNumber: '1',

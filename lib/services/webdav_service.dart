@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:webdav_client/webdav_client.dart' as webdav;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -24,6 +25,10 @@ class WebDAVService {
 
   webdav.Client? _client;
   WebDAVConfig? _currentConfig;
+
+  /// 上一次 _getClient 失败的原因（成功创建客户端后清空）。
+  /// [移植适配-OHOS] 用于把「密码丢失/配置缺失」这类不可恢复错误显式传给调用方。
+  String? lastClientFailureReason;
   final StorageService _storageService = StorageService.instance;
 
   void resetForTest() {
@@ -129,11 +134,21 @@ class WebDAVService {
   // WebDAV客户端管理
   Future<webdav.Client?> _getClient() async {
     final config = await loadConfig();
-    if (config == null || !config.isEnabled) return null;
+    if (config == null || !config.isEnabled) {
+      debugPrint('⚠️ WebDAV 客户端未创建: config=${config == null ? 'null' : 'disabled'}');
+      return null;
+    }
 
     // 从安全存储中获取密码
     final password = await _storageService.loadWebDAVPassword(config.id);
-    if (password == null || password.isEmpty) return null;
+    if (password == null || password.isEmpty) {
+      // 之前这里静默 return null，界面只会显示「没有备份文件」，极难定位。
+      debugPrint('⚠️ WebDAV 客户端未创建: 安全存储中缺少 id=${config.id} 的密码');
+      lastClientFailureReason =
+          'WebDAV 密码读取失败（安全存储中无 id=${config.id} 的记录）。'
+          '多为升级/密钥重置导致，请到 WebDAV 设置重新填写并保存密码。';
+      return null;
+    }
 
     // 检查配置是否发生变化，如果变化则重新创建客户端
     if (_client != null && _currentConfig != null) {
@@ -220,7 +235,10 @@ class WebDAVService {
       try {
         final client = await _getClient();
         if (client == null) {
-          throw Exception('无法创建WebDAV客户端，请检查配置');
+          throw Exception(
+            '无法创建WebDAV客户端，请检查配置'
+            '${lastClientFailureReason == null ? '' : '：$lastClientFailureReason'}',
+          );
         }
 
         final config = _currentConfig!;
@@ -291,6 +309,7 @@ class WebDAVService {
       } on SecureStorageUnavailableException {
         rethrow;
       } catch (e) {
+        debugPrint('⚠️ WebDAV 下载最新备份失败: $e');
         return null;
       }
     });
@@ -330,6 +349,9 @@ class WebDAVService {
       } on SecureStorageUnavailableException {
         rethrow;
       } catch (e) {
+        // 这里吞异常会让 UI 只显示「WebDAV 上没有找到备份文件」，
+        // 把网络/鉴权/路径错误伪装成「没有备份」。至少把原因打出来。
+        debugPrint('⚠️ 获取 WebDAV 备份列表失败: $e');
         return [];
       }
     });
@@ -348,6 +370,7 @@ class WebDAVService {
       } on SecureStorageUnavailableException {
         rethrow;
       } catch (e) {
+        debugPrint('⚠️ WebDAV 下载指定备份失败 ($remotePath): $e');
         return null;
       }
     });

@@ -72,7 +72,7 @@ class _AboutPageState extends State<AboutPage> {
   Future<void> _copyVersionInfo() async {
     final version = _version.isEmpty ? '未知版本' : _version;
     await Clipboard.setData(
-      ClipboardData(text: 'PT Mate $version\n$_repositoryUrl'),
+      ClipboardData(text: 'PT-Mate $version\n$_repositoryUrl'),
     );
     if (!mounted) return;
     NotificationHelper.showInfo(context, '版本信息已复制');
@@ -215,7 +215,7 @@ class _BrandHeader extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'PT Mate（PT伴侣）',
+                    'PT-Mate（PT伴侣）',
                     style: theme.textTheme.headlineSmall?.copyWith(
                       color: colorScheme.onPrimaryContainer,
                       fontWeight: FontWeight.w700,

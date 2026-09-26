@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 
 import 'package:flutter/services.dart';
@@ -21,6 +22,7 @@ import 'services/api/api_service.dart';
 import 'services/image_http_client.dart';
 import 'services/settings/display_settings_manager.dart';
 import 'services/storage/storage_service.dart';
+import 'services/logging/log_file_service.dart';
 import 'services/theme/theme_manager.dart';
 import 'services/backup_service.dart';
 import 'services/webdav_service.dart';
@@ -28,6 +30,8 @@ import 'providers/aggregate_search_provider.dart';
 import 'services/site_config_service.dart';
 import 'services/site_health_refresh_service.dart';
 import 'services/network/cookie_cloud_auto_sync_service.dart';
+import 'services/downloader/speed_scheduler_service.dart';
+import 'services/downloader/seed_health_monitor.dart';
 import 'services/network/proxy_service.dart';
 
 import 'services/downloader/downloader_config.dart';
@@ -192,6 +196,10 @@ class AppState extends ChangeNotifier {
       unawaited(
         Future.microtask(() => _refreshSiteHealthStatusesInBackground()),
       );
+
+      // 启动下载器后台服务：限速调度 + 做种健康度监控
+      SpeedSchedulerService.instance.start();
+      SeedHealthMonitor.instance.start();
 
       if (!completer.isCompleted) completer.complete();
     } catch (e, stackTrace) {
@@ -475,6 +483,8 @@ class _SiteSelectionDialogState extends State<_SiteSelectionDialog> {
     _filteredSites = widget.sites;
     _scrollController = ScrollController();
     _loadHealthStatuses();
+    // 恢复上次选择的视图模式（图标 / 列表）
+    _loadViewMode();
 
     // 在首帧渲染后滚动到当前选中的站点
     _scheduleScrollToActiveSite();
@@ -521,6 +531,72 @@ class _SiteSelectionDialogState extends State<_SiteSelectionDialog> {
     );
   }
 
+  // ---- 站点网格的尺寸常量 ----------------------------------------------
+  // 这些值同时被「磁贴渲染」与「网格高度计算」使用，必须保持一致，
+  // 否则会出现磁贴内容溢出（见 _gridMetricsFor 的注释）。
+  static const double _gridLogoSize = 30;
+  static const double _gridSpacing = 12;
+  static const double _gridNameFontSize = 13;
+  static const double _gridStatusFontSize = 11;
+  static const double _gridLineHeight = 1.2;
+  static const double _gridGap = 4; // Logo / 名称 / 状态行之间的间距
+  static const double _gridTilePadding = 3; // 磁贴内容左右内缩，避免贴边
+
+  /// 每个文本行在 `fontSize * height` 之外额外预留的高度。
+  ///
+  /// 实测（360dp 屏 + 鸿蒙默认中文字体）：磁贴内容真实高度 73.4dp，
+  /// 而 `Logo + 间距 + fontSize*height*2` 只算出 66.8dp —— 字体实际行框
+  /// 比「fontSize * height」高约 6.6dp（两行合计）。不补这个余量的话，
+  /// 即使按内容撑高也会差几个像素继续溢出。
+  static const double _gridLineAllowance = 4;
+
+  /// 上一次布局实测到的网格单元格尺寸（供 _scrollToActiveSite 粗定位用）。
+  ({double itemWidth, double itemHeight, int crossAxisCount}) _gridMetricsCache =
+      (itemWidth: 88, itemHeight: 88, crossAxisCount: 3);
+
+  /// 按「网格真实可用宽度」计算单元格尺寸。
+  ///
+  /// 两个坑：
+  ///
+  /// 1. 宽度必须用 LayoutBuilder 实测，不能拿 `MediaQuery.size.width * 0.92`
+  ///    反推：Dialog 默认 `insetPadding` 左右各 40，会把它夹窄（360dp 屏上
+  ///    实际只有 280dp），反推出来的宽度偏大，连带把磁贴高度也算错。
+  ///
+  /// 2. 不能再用 `childAspectRatio: 1.0` 把磁贴固定成正方形：磁贴内容高度
+  ///    （Logo + 名称 + 状态行）取决于字体行框高度，鸿蒙默认中文字体的行高
+  ///    明显大于 Android/iOS 同名字体，正方形高度不够就会触发
+  ///    `RenderFlex overflowed by N pixels` —— Flutter 用条纹覆盖溢出区域，
+  ///    恰好把磁贴底部的状态行（正常/离线）盖住，表现为「在线状态显示不正常」
+  ///    （实测溢出 4.8px，条纹正好压住状态行）。
+  ///
+  /// 这里按内容反算所需高度，与正方形边长取较大值；磁贴内容外面还包了
+  /// `FittedBox(scaleDown)` 兜底（见 _buildGridItem），系统字体放大时
+  /// 只会等比缩小，不会再溢出。
+  ({double itemWidth, double itemHeight, int crossAxisCount}) _gridMetricsFor(
+    double availableWidth,
+  ) {
+    final int crossAxisCount = availableWidth >= 560
+        ? 5
+        : (availableWidth >= 420 ? 4 : 3);
+    final double itemWidth =
+        (availableWidth - (crossAxisCount - 1) * _gridSpacing) /
+            crossAxisCount;
+
+    final double nameLine =
+        _gridNameFontSize * _gridLineHeight + _gridLineAllowance;
+    final double statusLine =
+        _gridStatusFontSize * _gridLineHeight + _gridLineAllowance;
+    final double contentHeight =
+        _gridLogoSize + _gridGap + nameLine + _gridGap + statusLine;
+
+    return (
+      itemWidth: itemWidth,
+      // 正方形够高就保持正方形，不够则按内容撑高，保证永不溢出。
+      itemHeight: math.max(itemWidth, contentHeight),
+      crossAxisCount: crossAxisCount,
+    );
+  }
+
   void _scrollToActiveSite() {
     if (!mounted || _selectedSiteId.isEmpty || !_scrollController.hasClients) {
       return;
@@ -529,22 +605,13 @@ class _SiteSelectionDialogState extends State<_SiteSelectionDialog> {
     final index = _filteredSites.indexWhere((s) => s.id == _selectedSiteId);
     if (index == -1) return;
 
-    final isLargeScreen = ScreenUtils.isLargeScreen(context);
-    final size = MediaQuery.of(context).size;
-    final dialogWidth = isLargeScreen ? 680.0 : size.width * 0.92;
-
     // 先粗定位，再在下一帧用 ensureVisible 做精准定位。
     double roughOffset = 0;
     if (_isGridView) {
-      final crossAxisCount = isLargeScreen ? 5 : 3;
-      final horizontalPadding = 24.0 * 2;
-      final spacing = 12.0;
-      final availableWidth = dialogWidth - horizontalPadding;
-      final itemWidth =
-          (availableWidth - (crossAxisCount - 1) * spacing) / crossAxisCount;
-      final itemHeight = itemWidth; // childAspectRatio: 1.0
-      final row = index ~/ crossAxisCount;
-      roughOffset = (row * (itemHeight + spacing)).clamp(0.0, double.infinity);
+      final metrics = _gridMetricsCache;
+      final row = index ~/ metrics.crossAxisCount;
+      roughOffset = (row * (metrics.itemHeight + _gridSpacing))
+          .clamp(0.0, double.infinity);
     } else {
       const itemHeight = 74.0;
       roughOffset = (index * itemHeight).clamp(0.0, double.infinity);
@@ -576,7 +643,37 @@ class _SiteSelectionDialogState extends State<_SiteSelectionDialog> {
   void _handleViewModeChanged(bool nextGridView) {
     if (_isGridView == nextGridView) return;
     setState(() => _isGridView = nextGridView);
+    _persistViewMode(nextGridView);
     _scheduleScrollToActiveSite();
+  }
+
+  // ---- 视图模式持久化 ----------------------------------------------------
+  // 切换站点弹窗的「图标 / 列表」模式是会话级状态，默认每次打开都回到
+  // 图标模式。这里用 SharedPreferences 记住用户最后的选择，下次打开时恢复。
+  static const String _prefKeySiteViewGrid = 'ptmate.site_switch.grid_view';
+
+  Future<void> _loadViewMode() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      final saved = prefs.getBool(_prefKeySiteViewGrid);
+      if (saved != null && saved != _isGridView) {
+        setState(() => _isGridView = saved);
+        _scheduleScrollToActiveSite();
+      }
+    } catch (e) {
+      // 读取失败不影响默认值（图标模式）
+      debugPrint('load site view mode failed: $e');
+    }
+  }
+
+  Future<void> _persistViewMode(bool grid) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefKeySiteViewGrid, grid);
+    } catch (e) {
+      debugPrint('persist site view mode failed: $e');
+    }
   }
 
   Future<void> _loadHealthStatuses() async {
@@ -785,22 +882,34 @@ class _SiteSelectionDialogState extends State<_SiteSelectionDialog> {
                   : Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
                       child: _isGridView
-                          ? GridView.builder(
-                              controller: _scrollController,
-                              padding: const EdgeInsets.only(bottom: 24),
-                              itemCount: _filteredSites.length,
-                              gridDelegate:
-                                  SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: isLargeScreen ? 5 : 3,
-                                    mainAxisSpacing: 12,
-                                    crossAxisSpacing: 12,
-                                    childAspectRatio: 1.0,
-                                  ),
-                              itemBuilder: (context, index) {
-                                final site = _filteredSites[index];
-                                return KeyedSubtree(
-                                  key: _itemKeyForSite(site.id),
-                                  child: _buildGridItem(site),
+                          ? LayoutBuilder(
+                              builder: (context, constraints) {
+                                // 用网格真实可用宽度算尺寸，并缓存给滚动定位用。
+                                final metrics = _gridMetricsFor(
+                                  constraints.maxWidth,
+                                );
+                                _gridMetricsCache = metrics;
+                                return GridView.builder(
+                                  controller: _scrollController,
+                                  padding: const EdgeInsets.only(bottom: 24),
+                                  itemCount: _filteredSites.length,
+                                  gridDelegate:
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount:
+                                            metrics.crossAxisCount,
+                                        mainAxisSpacing: _gridSpacing,
+                                        crossAxisSpacing: _gridSpacing,
+                                        // 用固定高度替代 childAspectRatio，
+                                        // 避免中文字体行高不同导致底部溢出。
+                                        mainAxisExtent: metrics.itemHeight,
+                                      ),
+                                  itemBuilder: (context, index) {
+                                    final site = _filteredSites[index];
+                                    return KeyedSubtree(
+                                      key: _itemKeyForSite(site.id),
+                                      child: _buildGridItem(site),
+                                    );
+                                  },
                                 );
                               },
                             )
@@ -880,24 +989,46 @@ class _SiteSelectionDialogState extends State<_SiteSelectionDialog> {
                 ),
               ),
             Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _buildSiteLogo(site, isSelected, 30),
-                  const SizedBox(height: 4),
-                  Text(
-                    site.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: isSelected
-                          ? FontWeight.bold
-                          : FontWeight.w500,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  // 磁贴内容外面包一层 FittedBox(scaleDown) 作为硬兜底：
+                  // 万一系统字体放大、或字体行框高度与预估不一致，内容会等比
+                  // 缩小而不是溢出——溢出条纹会盖住底部状态行，这正是
+                  // 「在线状态显示不正常」的根因，所以这里必须保证不溢出。
+                  return FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: SizedBox(
+                      width: math.max(
+                        0,
+                        constraints.maxWidth - _gridTilePadding * 2,
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildSiteLogo(site, isSelected, _gridLogoSize),
+                          const SizedBox(height: _gridGap),
+                          Text(
+                            site.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              // 固定字号与行高，使磁贴高度可精确预测
+                              // （见 _gridMetricsFor）。
+                              fontSize: _gridNameFontSize,
+                              height: _gridLineHeight,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: _gridGap),
+                          _buildStatusRow(hs),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  _buildStatusRow(hs),
-                ],
+                  );
+                },
               ),
             ),
           ],
@@ -999,7 +1130,10 @@ class _SiteSelectionDialogState extends State<_SiteSelectionDialog> {
           _getStatusText(hs),
           style: TextStyle(
             color: Theme.of(context).colorScheme.onSurfaceVariant,
-            fontSize: 11,
+            fontSize: _gridStatusFontSize,
+            // 固定行高：不继承 DefaultTextStyle 的行高，否则中文字体下
+            // 行框会比预期高，撑破网格磁贴（与 _gridMetricsFor 的计算对齐）。
+            height: _gridLineHeight,
           ),
         ),
       ],
@@ -1121,8 +1255,30 @@ class MTeamAppState extends State<MTeamApp> with WidgetsBindingObserver {
     );
     if (_secureStorageReady) {
       _loadApplicationState();
+    } else {
+      // [移植适配-OHOS] 启动时安全存储未就绪（无原生实现而挂起被超时中断）
+      // 时，上层已被 SecureStorageRecoveryPage 遮罩。此处不再依赖“从未发生的
+      // resumed 生命周期事件”触发重试，直接兜底跑一次应用状态加载，让
+      // appState.isInitialized 能被推进，避免永久停在初始化转圈状态。
+      unawaited(_bootstrapApplicationStateWithoutSecureStorage());
     }
     WidgetsBinding.instance.addObserver(this);
+  }
+
+  /// [移植适配-OHOS] 安全存储不可用时的降级启动：等一小会儿让 main() 里的
+  /// 超时判定落地，然后加载非敏感配置，保证界面不至于空白无响应。
+  Future<void> _bootstrapApplicationStateWithoutSecureStorage() async {
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    if (!mounted) return;
+    if (StorageService.instance.canAccessSensitiveStorage) return;
+    try {
+      await _appState.loadInitial();
+    } catch (error) {
+      LogFileService.instance.append(
+        'bootstrap without secure storage failed: $error',
+      );
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadApplicationState({bool forceReload = false}) async {
@@ -1409,7 +1565,7 @@ class MTeamAppState extends State<MTeamApp> with WidgetsBindingObserver {
           return MaterialApp(
             navigatorKey: _navigatorKey,
             debugShowCheckedModeBanner: false,
-            title: 'PT Mate',
+            title: 'PT-Mate',
             theme: themeManager.lightTheme,
             darkTheme: themeManager.darkTheme,
             themeMode: themeManager.flutterThemeMode,
@@ -3030,9 +3186,9 @@ class _HomePageState extends State<HomePage> {
                         child: Text.rich(
                           TextSpan(
                             children: [
-                              TextSpan(text: appState.site?.name ?? 'PT Mate'),
+                              TextSpan(text: appState.site?.name ?? 'PT-Mate'),
                               TextSpan(
-                                text: ' - PT Mate',
+                                text: ' - PT-Mate',
                                 style: const TextStyle(fontSize: 14),
                               ),
                             ],
@@ -4027,3 +4183,4 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
+

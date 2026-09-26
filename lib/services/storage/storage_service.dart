@@ -89,6 +89,12 @@ class StorageKeys {
   static const String themeUseDynamic = 'theme.useDynamic'; // bool
   static const String themeSeedColor = 'theme.seedColor'; // int (ARGB)
 
+  // 下载任务页设置
+  static const String downloadTasksRefreshInterval =
+      'downloader.refreshInterval'; // int 秒
+  static const String downloadTasksShowAll =
+      'downloader.showAllTasks'; // bool
+
   // 图片设置
   static const String autoLoadImages = 'images.autoLoad'; // bool
   static const String showCoverImages = 'images.showCover'; // bool
@@ -4215,6 +4221,28 @@ class StorageService {
     return prefs.getInt(StorageKeys.themeSeedColor);
   }
 
+  // 下载任务页：自动刷新间隔（秒，默认 5）
+  Future<void> saveDownloadTasksRefreshInterval(int seconds) async {
+    final prefs = await _prefs;
+    await prefs.setInt(StorageKeys.downloadTasksRefreshInterval, seconds);
+  }
+
+  Future<int> loadDownloadTasksRefreshInterval() async {
+    final prefs = await _prefs;
+    return prefs.getInt(StorageKeys.downloadTasksRefreshInterval) ?? 5;
+  }
+
+  // 下载任务页：是否显示全部任务（默认 false）
+  Future<void> saveDownloadTasksShowAll(bool showAll) async {
+    final prefs = await _prefs;
+    await prefs.setBool(StorageKeys.downloadTasksShowAll, showAll);
+  }
+
+  Future<bool> loadDownloadTasksShowAll() async {
+    final prefs = await _prefs;
+    return prefs.getBool(StorageKeys.downloadTasksShowAll) ?? false;
+  }
+
   // 图片设置相关：保存与读取
   Future<void> saveAutoLoadImages(bool autoLoad) async {
     final prefs = await _prefs;
@@ -4653,15 +4681,62 @@ class StorageService {
   Future<void> _saveCookieCloudConfigInCurrentEpoch(
     CookieCloudConfig config,
   ) async {
+    // [修复] 空值不覆盖 + 格式校验。
+    //
+    // 背景：界面在「已有配置尚未加载完成」时提交是很常见的时序（例如打开页面
+    // 立刻点保存、或安全存储刚恢复、字段还没回填）。此前会直接把空串落库，
+    // 把服务器地址 / UUID / 密码清成空，表现为「配置没保存住」。
+    //
+    // 约定：三项中任意一项为空串 → 视为「未填写」，保留已有值；
+    // 非空才做格式校验，格式非法直接抛错，由界面提示。
+    final current = await _loadCookieCloudSecretsInCurrentEpoch();
+    final nextUrl = config.url.trim();
+    final nextUuid = config.uuid.trim();
+    final nextPassword = config.password;
+
+    final url = nextUrl.isEmpty ? current.url.trim() : nextUrl;
+    final uuid = nextUuid.isEmpty ? current.uuid.trim() : nextUuid;
+    final password = nextPassword.isEmpty ? current.password : nextPassword;
+
+    if (url.isNotEmpty && !isLikelyCookieCloudServerUrl(url)) {
+      throw const FormatException(
+        'CookieCloud 服务器地址格式不正确（需为 http(s)://域名或IP[:端口]）',
+      );
+    }
+    if (uuid.isNotEmpty && !isLikelyCookieCloudUuid(uuid)) {
+      throw const FormatException(
+        'CookieCloud UUID 格式不正确（需为 8-64 位字母数字，可含 - ）',
+      );
+    }
+
     await _saveCookieCloudSecrets(
-      _CookieCloudSecrets(
-        url: config.url.trim(),
-        uuid: config.uuid.trim(),
-        password: config.password,
-      ),
+      _CookieCloudSecrets(url: url, uuid: uuid, password: password),
       resolveLegacyConflicts: true,
-      companionConfig: config,
+      companionConfig: config.copyWith(url: url, uuid: uuid, password: password),
     );
+  }
+
+  /// 服务器地址校验：必须是 http/https 开头的合法主机（域名或 IP，可带端口/路径）。
+  static bool isLikelyCookieCloudServerUrl(String value) {
+    final uri = Uri.tryParse(value);
+    if (uri == null) return false;
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'http' && scheme != 'https') return false;
+    final host = uri.host;
+    if (host.isEmpty) return false;
+    // 禁止空白字符与非 ASCII 之外的异常字符
+    if (RegExp(r'\s').hasMatch(value)) return false;
+    final hostOk = RegExp(
+      r'^[A-Za-z0-9._~-]+$',
+    ).hasMatch(host) || RegExp(r'^\[[0-9A-Fa-f:]+\]$').hasMatch(host);
+    if (!hostOk) return false;
+    final port = uri.hasPort ? uri.port : 0;
+    return port >= 0 && port <= 65535;
+  }
+
+  /// UUID 校验：CookieCloud 的 UUID 为 8-64 位字母数字（可含连字符）。
+  static bool isLikelyCookieCloudUuid(String value) {
+    return RegExp(r'^[A-Za-z0-9][A-Za-z0-9-]{7,63}$').hasMatch(value);
   }
 
   Future<void> _persistCookieCloudPreferences(CookieCloudConfig config) async {

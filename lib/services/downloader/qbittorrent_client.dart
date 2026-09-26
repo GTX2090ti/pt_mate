@@ -1,6 +1,7 @@
 // Keep the public `onConfigUpdated` named parameter stable.
 // ignore_for_file: prefer_initializing_formals
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -15,6 +16,7 @@ import 'downloader_client.dart';
 import 'downloader_config.dart';
 import 'downloader_models.dart';
 import 'torrent_file_downloader_mixin.dart';
+import '../network/proxy_service.dart';
 
 /// qBittorrent下载器客户端实现
 class QbittorrentClient
@@ -45,7 +47,7 @@ class QbittorrentClient
   static Dio _createDio(QbittorrentConfig config) {
     final dio = Dio(
       BaseOptions(
-        connectTimeout: const Duration(seconds: 10),
+        connectTimeout: const Duration(seconds: 20),
         receiveTimeout: const Duration(seconds: 30),
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
@@ -194,6 +196,13 @@ class QbittorrentClient
 
       return response;
     } on DioException catch (e) {
+      // 网络层失败时触发代理可达性探测（代理不可达自动回退直连）
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.sendTimeout ||
+          e.type == DioExceptionType.receiveTimeout ||
+          e.type == DioExceptionType.connectionError) {
+        ProxyService.instance.scheduleProbeIfNeeded();
+      }
       if (isTimeoutError(e)) rethrow;
 
       // 检查响应状态
@@ -670,5 +679,362 @@ class QbittorrentClient
   /// 释放资源
   void dispose() {
     _dio.close();
+  }
+
+  // ============================================================
+  // 专业增强 API：Tracker 管理
+  // ============================================================
+
+  /// 获取指定任务的 Tracker 列表
+  Future<List<TorrentTracker>> getTrackers(String hash) async {
+    final response = await _request(
+      'GET',
+      '/torrents/trackers',
+      body: {'hash': hash},
+    );
+    final List<dynamic> data = response.data as List<dynamic>;
+    print('[TRACKER] getTrackers hash=$hash 返回 ${data.length} 条');
+    if (data.isNotEmpty) {
+      print('[TRACKER] getTrackers 首条原始: ${data.first}');
+    }
+    return data
+        .map((e) => TorrentTracker.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// 批量重新宣告（reannounce）Tracker
+  Future<void> reannounceTorrents(List<String> hashes) async {
+    await _request('POST', '/torrents/reannounce', body: {
+      'hashes': hashes.join('|'),
+    });
+  }
+
+  /// 添加 Tracker 到指定任务
+  Future<void> addTracker(String hash, String trackerUrl) async {
+    await _request('POST', '/torrents/addTrackers', body: {
+      'hash': hash,
+      'urls': trackerUrl,
+    });
+  }
+
+  /// 编辑 Tracker（替换原 URL）
+  Future<void> editTracker(
+    String hash,
+    String originalUrl,
+    String newUrl,
+  ) async {
+    await _request('POST', '/torrents/editTrackers', body: {
+      'hash': hash,
+      'origUrl': originalUrl,
+      'newUrl': newUrl,
+    });
+  }
+
+  /// 删除 Tracker
+  Future<void> removeTrackers(String hash, List<String> urls) async {
+    await _request('POST', '/torrents/removeTrackers', body: {
+      'hash': hash,
+      'urls': urls.join('\n'),
+    });
+  }
+
+  // ============================================================
+  // 专业增强 API：任务属性 / 健康度
+  // ============================================================
+
+  /// 获取任务详细属性（做种时间、分享率等）
+  Future<TorrentProperties> getTorrentProperties(String hash) async {
+    final response = await _request(
+      'GET',
+      '/torrents/properties',
+      body: {'hash': hash},
+    );
+    return TorrentProperties.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  // ============================================================
+  // 专业增强 API：优先级 / 队列
+  // ============================================================
+
+  /// 设置任务优先级
+  /// [priority]: -1=跳过, 0=普通, 1=高, 2=最高
+  Future<void> setTorrentPriority(
+    List<String> hashes,
+    int priority,
+  ) async {
+    await _request('POST', '/torrents/setPriority', body: {
+      'hashes': hashes.join('|'),
+      'priority': priority.toString(),
+    });
+  }
+
+  /// 队列最前（topPrio）
+  Future<void> topPriority(List<String> hashes) async {
+    await _request('POST', '/torrents/topPrio', body: {
+      'hashes': hashes.join('|'),
+    });
+  }
+
+  /// 队列最后（bottomPrio）
+  Future<void> bottomPriority(List<String> hashes) async {
+    await _request('POST', '/torrents/bottomPrio', body: {
+      'hashes': hashes.join('|'),
+    });
+  }
+
+  /// 队列上移（increasePrio）
+  Future<void> increasePriority(List<String> hashes) async {
+    await _request('POST', '/torrents/increasePrio', body: {
+      'hashes': hashes.join('|'),
+    });
+  }
+
+  /// 队列下移（decreasePrio）
+  Future<void> decreasePriority(List<String> hashes) async {
+    await _request('POST', '/torrents/decreasePrio', body: {
+      'hashes': hashes.join('|'),
+    });
+  }
+
+  // ============================================================
+  // 专业增强 API：批量标签 / 分类
+  // ============================================================
+
+  /// 批量添加标签
+  Future<void> addTags(List<String> hashes, List<String> tags) async {
+    await _request('POST', '/torrents/addTags', body: {
+      'hashes': hashes.join('|'),
+      'tags': tags.join(','),
+    });
+  }
+
+  /// 批量移除标签
+  Future<void> removeTags(List<String> hashes, List<String> tags) async {
+    await _request('POST', '/torrents/removeTags', body: {
+      'hashes': hashes.join('|'),
+      'tags': tags.join(','),
+    });
+  }
+
+  /// 批量设置分类
+  Future<void> setCategory(List<String> hashes, String category) async {
+    await _request('POST', '/torrents/setCategory', body: {
+      'hashes': hashes.join('|'),
+      'category': category,
+    });
+  }
+
+  /// 批量重新校验（recheck）
+  Future<void> recheckTorrents(List<String> hashes) async {
+    await _request('POST', '/torrents/recheck', body: {
+      'hashes': hashes.join('|'),
+    });
+  }
+
+  /// 新增分类
+  Future<void> createCategory(String category,
+      {String? savePath}) async {
+    await _request('POST', '/torrents/createCategory', body: {
+      'category': category,
+      if (savePath != null && savePath.isNotEmpty) 'savePath': savePath,
+    });
+  }
+
+  /// 删除分类（不会删除种子）
+  Future<void> deleteCategory(String category) async {
+    await _request('POST', '/torrents/removeCategories', body: {
+      'categories': category,
+    });
+  }
+
+  /// 重命名分类
+  Future<void> renameCategory(String oldName, String newName) async {
+    await _request('POST', '/torrents/editCategory', body: {
+      'category': oldName,
+      'name': newName,
+    });
+  }
+
+  /// 获取任务的连接节点（Peers）列表
+  /// 来自 GET /sync/torrentPeers
+  Future<List<TorrentPeer>> getTorrentPeers(String hash) async {
+    final response = await _request('GET', '/sync/torrentPeers', body: {
+      'hash': hash,
+    });
+    final Map<String, dynamic> data = response.data as Map<String, dynamic>;
+    final peers = data['peers'];
+    if (peers is! Map<String, dynamic>) return const [];
+    final list = <TorrentPeer>[];
+    peers.forEach((peerId, peerJson) {
+      if (peerJson is Map<String, dynamic>) {
+        final peer = TorrentPeer.fromJson({
+          ...peerJson,
+          'peer_id': peerJson['peer_id'] ?? peerId,
+        });
+        list.add(peer);
+      }
+    });
+    // 按下载速度降序
+    list.sort((a, b) => b.dlSpeed.compareTo(a.dlSpeed));
+    return list;
+  }
+
+  /// 获取任务的文件列表（对应 GET /torrents/files）
+  Future<List<TorrentFile>> getTorrentFiles(String hash) async {
+    final response = await _request('GET', '/torrents/files', body: {
+      'hash': hash,
+    });
+    final raw = response.data;
+    if (raw is! List) return const [];
+    final list = <TorrentFile>[];
+    for (final item in raw) {
+      if (item is Map<String, dynamic>) {
+        list.add(TorrentFile.fromJson(item));
+      }
+    }
+    return list;
+  }
+
+  /// 设置文件优先级（对应 POST /torrents/filePrio）
+  /// priority: 0=跳过(不下载) 1=普通 2=高 3=最高
+  /// [ids] 为文件 index 列表（逗号拼接）
+  Future<void> setFilePriority({
+    required String hash,
+    required List<int> ids,
+    required int priority,
+  }) async {
+    if (ids.isEmpty) return;
+    await _request('POST', '/torrents/filePrio', body: {
+      'hash': hash,
+      'id': ids.join(','),
+      'priority': priority.toString(),
+    });
+  }
+
+  // ============================================================
+  // 专业增强 API：限速
+  // ============================================================
+
+  /// 获取全局偏好（限速配置）
+  Future<GlobalPreferences> getGlobalPreferences() async {
+    final response = await _request('GET', '/app/preferences');
+    final data = response.data as Map<String, dynamic>;
+    return GlobalPreferences.fromJson(data);
+  }
+
+  /// 设置全局下载限速（KiB/s，-1 表示不限速）
+  Future<void> setGlobalDownloadLimit(int limitKib) async {
+    await _request('POST', '/transfer/setDownloadLimit', body: {
+      'limit': limitKib.toString(),
+    });
+  }
+
+  /// 设置全局上传限速（KiB/s，-1 表示不限速）
+  Future<void> setGlobalUploadLimit(int limitKib) async {
+    await _request('POST', '/transfer/setUploadLimit', body: {
+      'limit': limitKib.toString(),
+    });
+  }
+
+  /// 切换限速模式（0=全局, 1=备选, 2=调度）
+  Future<void> setSpeedLimitsMode(int mode) async {
+    await _request('POST', '/transfer/setSpeedLimitsMode', body: {
+      'mode': mode.toString(),
+    });
+  }
+
+  // ============================================================
+  // 专业增强 API：RSS 订阅与规则
+  // ============================================================
+
+  /// 添加 RSS 订阅源
+  Future<void> addRssFeed(String url, {String? path}) async {
+    await _request('POST', '/rss/addFeed', body: {
+      'url': url,
+      if (path != null) 'path': path,
+    });
+  }
+
+  /// 获取 RSS 订阅源列表
+  Future<List<RssFeed>> getRssFeeds() async {
+    final response = await _request('GET', '/rss/feeds');
+    final data = response.data as Map<String, dynamic>;
+    return data.entries.map((entry) {
+      final item = entry.value as Map<String, dynamic>? ?? {};
+      return RssFeed.fromJson({
+        'url': entry.key,
+        'title': item['title'] ?? '',
+        'lastBuildDate': item['lastBuildDate'] ?? 0,
+        'isUpdating': item['isUpdating'] ?? false,
+        'hasNewItems': item['hasNewItems'] ?? false,
+      });
+    }).toList();
+  }
+
+  /// 获取 RSS 文章
+  Future<List<RssArticle>> getRssItems({bool withData = true}) async {
+    final response = await _request(
+      'GET',
+      '/rss/items',
+      body: {'withData': withData.toString()},
+    );
+    final data = response.data as Map<String, dynamic>;
+    final articles = <RssArticle>[];
+    void walk(dynamic node) {
+      if (node is! Map) return;
+      for (final entry in node.entries) {
+        final value = entry.value;
+        if (value is Map) {
+          if (value.containsKey('title') && value.containsKey('link')) {
+            articles.add(RssArticle.fromJson({
+              'title': value['title'],
+              'link': value['link'],
+              'description': value['description'] ?? '',
+              'date': value['date'] ?? 0,
+              'isRead': value['isRead'] ?? false,
+            }));
+          } else {
+            walk(value);
+          }
+        }
+      }
+    }
+
+    walk(data);
+    return articles;
+  }
+
+  /// 刷新 RSS 订阅
+  Future<void> refreshRssItem(String itemPath) async {
+    await _request('POST', '/rss/refreshItem', body: {
+      'itemPath': itemPath,
+    });
+  }
+
+  /// 获取 RSS 自动下载规则
+  Future<List<RssRule>> getRssRules() async {
+    final response = await _request('GET', '/rss/rules');
+    final data = response.data as Map<String, dynamic>;
+    return data.entries.map((entry) {
+      return RssRule.fromJson(
+        entry.key,
+        entry.value as Map<String, dynamic>? ?? {},
+      );
+    }).toList();
+  }
+
+  /// 设置 RSS 自动下载规则
+  Future<void> setRssRule(String ruleName, RssRule rule) async {
+    await _request('POST', '/rss/setRule', body: {
+      'ruleName': ruleName,
+      'ruleDef': jsonEncode(rule.toRuleJson()),
+    });
+  }
+
+  /// 删除 RSS 规则
+  Future<void> removeRssRule(String ruleName) async {
+    await _request('POST', '/rss/removeRule', body: {
+      'ruleName': ruleName,
+    });
   }
 }

@@ -55,3 +55,11 @@ server/ptmate-server
 server/curl-test.sh
 
 .codex
+# Tool state & local backups
+.flutter
+.flutter_tool_state
+.port_backup/
+# Embedded tool repos
+ohos/.codegenie/
+ohos/HoKit/
+

@@ -34,6 +34,7 @@ import '../widgets/aggregate_search_strategy_list.dart';
 import 'torrent_detail_page.dart';
 
 import 'package:pt_mate/utils/notification_helper.dart';
+import '../services/downloader/disk_guard_service.dart';
 
 import '../utils/screen_utils.dart';
 import '../utils/url_launcher_helper.dart';
@@ -1428,6 +1429,29 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
     SiteConfig siteConfig,
   ) async {
     try {
+      // [专业增强] 下载前磁盘检查（仅 qBittorrent）
+      if (clientConfig.type == DownloaderType.qbittorrent) {
+        final diskConfig = await DiskGuardService.instance.loadConfig();
+        final client = DownloaderService.instance.getClient(
+          config: clientConfig,
+          password: password,
+        );
+        final serverState = await client.getServerState() as dynamic;
+        final freeBytes = serverState.freeSpaceOnDisk as int? ?? 0;
+        final sizeBytes = item.torrent.sizeBytes;
+        final checkResult = await DiskGuardService.instance
+            .checkBeforeDownload(
+              freeSpaceBytes: freeBytes,
+              downloadSizeBytes: sizeBytes,
+              config: diskConfig,
+            );
+        if (checkResult != null) {
+          if (mounted) {
+            NotificationHelper.showError(context, checkResult);
+          }
+          return;
+        }
+      }
       // 使用统一的下载器服务
       await DownloaderService.instance.addTask(
         config: clientConfig,

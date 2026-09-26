@@ -41,7 +41,7 @@ class AppDrawer extends StatelessWidget {
               child: Align(
                 alignment: Alignment.bottomLeft,
                 child: Text(
-                  'PT Mate',
+                  'PT-Mate',
                   style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.w600,

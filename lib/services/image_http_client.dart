@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import 'package:dio/dio.dart';
 
 class ImageHttpClient {
@@ -74,10 +76,23 @@ class ImageHttpClient {
       if (response.data != null && response.statusCode == 200) {
         _addToCache(cacheKey, response.data!);
       }
+      if (response.statusCode != 200) {
+        // [移植适配-OHOS] 图片加载失败在 UI 上只表现为一个占位块，
+        // 没有任何日志，无法判断是 URL 拼接错误、防盗链 403 还是网络问题。
+        // 这里把 URL / 状态码 / 是否带 Cookie 全部落日志，便于一次定位。
+        debugPrint(
+          '🖼️ 图片响应异常: status=${response.statusCode} '
+          'url=$url site=$siteBaseUrl 带Cookie=${siteCookie != null && siteCookie.trim().isNotEmpty}',
+        );
+      }
       return response;
     } catch (e) {
       // 请求失败，移除可能存在的损坏缓存
       _removeFromCache(cacheKey);
+      debugPrint(
+        '🖼️ 图片加载失败: url=$url site=$siteBaseUrl '
+        '带Cookie=${siteCookie != null && siteCookie.trim().isNotEmpty} 错误=$e',
+      );
       rethrow;
     } finally {
       // 请求完成，移除pending状态

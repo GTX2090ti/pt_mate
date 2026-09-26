@@ -1,5 +1,5 @@
 # Initial Concept
-PT Mate (PT伴侣) is a mobile-centric Private Tracker (PT) client that allows users to browse, search, and manage torrents across multiple sites without requiring a self-hosted backend or additional Docker containers.
+PT-Mate (PT伴侣) is a mobile-centric Private Tracker (PT) client that allows users to browse, search, and manage torrents across multiple sites without requiring a self-hosted backend or additional Docker containers.
 
 # Product Definition
 

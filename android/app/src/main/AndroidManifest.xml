@@ -14,7 +14,7 @@
         </intent>
     </queries>
     <application
-        android:label="PT Mate"
+        android:label="PT-Mate"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon"
         android:allowBackup="false"

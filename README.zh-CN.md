@@ -1,10 +1,10 @@
-# PT Mate（PT伴侣）
+# PT-Mate（PT伴侣）
 
 [English](./README.md)
 
 基于 Flutter（Material Design 3）开发的私有种子站点客户端，支持多种 PT 站点的种子浏览、搜索和下载管理。
 
-📣 官方交流群（Telegram）：[加入 PT Mate 官方交流群](https://t.me/pt_mate)
+📣 官方交流群（Telegram）：[加入 PT-Mate 官方交流群](https://t.me/pt_mate)
 
 ## 功能概览
 
@@ -45,7 +45,7 @@
 
 ## Cookie Cloud 同步与安全警示
 
-PT Mate 支持 **Cookie Cloud** 同步功能，该功能允许您将桌面浏览器中已登录的 PT 站点的 Cookie 自动/手动同步至移动端的 PT Mate，免去在手机上繁琐输入 Cookie 的不便，并支持基于 Presets 的批量一键站点导入与更新。
+PT-Mate 支持 **Cookie Cloud** 同步功能，该功能允许您将桌面浏览器中已登录的 PT 站点的 Cookie 自动/手动同步至移动端的 PT-Mate，免去在手机上繁琐输入 Cookie 的不便，并支持基于 Presets 的批量一键站点导入与更新。
 
 > [!CAUTION]
 > ### ⚠️ 极其重要的安全与封号风险警示（请务必仔细阅读！）
@@ -57,8 +57,8 @@ PT Mate 支持 **Cookie Cloud** 同步功能，该功能允许您将桌面浏览
 >    - **强烈建议**：仅使用您自己搭建的、受信任的私有 Cookie Cloud 服务器（例如通过 Docker 部署在您的 NAS、VPS 等私有设备上）。
 > 2. **封号风险（异地/多 IP 访问限制）**
 >    - 许多 PT 站点有非常严苛的安全风控策略，限制同一账号在短时间内出现异地或多 IP 登录（如手机流量与家用宽带 IP 冲突）。
->    - 当 PT Mate 使用通过 Cookie Cloud 同步来的 Cookie，在移动网络（4G/5G）或异地网络发起请求时，可能会触发站点的**“账号分享”或“异地登录劫持”监测，从而导致账号被永久封禁**。
->    - **安全建议**：如果您在户外或非家庭宽带网络环境下使用 PT Mate，请谨慎开启或使用相关站点的自动刷新/同步功能；对风控极严的站点，请谨慎使用或配置代理。
+>    - 当 PT-Mate 使用通过 Cookie Cloud 同步来的 Cookie，在移动网络（4G/5G）或异地网络发起请求时，可能会触发站点的**“账号分享”或“异地登录劫持”监测，从而导致账号被永久封禁**。
+>    - **安全建议**：如果您在户外或非家庭宽带网络环境下使用 PT-Mate，请谨慎开启或使用相关站点的自动刷新/同步功能；对风控极严的站点，请谨慎使用或配置代理。
 > 3. **传输加密不等于绝对安全**
 >    - 尽管 Cookie Cloud 采用了客户端加密（UUID + 密码混淆 MD5 派生密钥进行 AES 加密），但如果您的 UUID 和密码强度过低，仍有被暴力破解的可能。请务必设置高强度的同步密码。
 > 4. **范围超出预期风险（不仅同步 PT 站 Cookie）**
@@ -92,7 +92,7 @@ git config core.hooksPath .githooks
 ## iOS 侧载源
 
 SideStore：
-[添加 PT Mate Source](https://intradeus.github.io/http-protocol-redirector?r=sidestore://source?url=https://raw.githubusercontent.com/JustLookAtNow/pt_mate/refs/heads/master/altsource/AltSource.json)
+[添加 PT-Mate Source](https://intradeus.github.io/http-protocol-redirector?r=sidestore://source?url=https://raw.githubusercontent.com/JustLookAtNow/pt_mate/refs/heads/master/altsource/AltSource.json)
 
 直接源地址：
 

@@ -112,22 +112,56 @@ class BackupService {
   Future<BackupData> _createBackupInCurrentEpoch() async {
     final data = <String, dynamic>{};
 
+    // [移植适配-OHOS] 分步日志：导出曾出现「静默失败」——异常只在 UI 弹出，
+    // 应用日志里查不到任何记录，无法定位。这里在每个收集阶段打点，
+    // 失败时看最后一条「备份收集」日志即可锁定阶段。
+    void step(String name) => debugPrint('📤 备份收集: $name 完成');
+
+    // [移植适配-OHOS] 类型防御：SharedPreferences 里的列表项若被写成其它类型
+    // （历史上 ohos 侧把列表 JSON.stringify 后以字符串存储），getStringList()
+    // 会抛「type 'String' is not a subtype of type 'List<dynamic>?'」并中断
+    // 整条导出链路。单个偏好项不可读不应让备份整体失败，这里降级为空列表。
+    Future<List<String>> safeList(
+      String label,
+      Future<List<String>> Function() loader,
+    ) async {
+      try {
+        return await loader();
+      } catch (e) {
+        debugPrint('⚠️ 备份收集: $label 读取失败，降级为空列表: $e');
+        return <String>[];
+      }
+    }
+
     // 获取应用版本信息
-    final packageInfo = await PackageInfo.fromPlatform();
+    // [移植适配-OHOS] package_info_plus 无原生实现时，getAll() 会拿到空回包，
+    // 在 `map!` 处抛 Null check 异常，直接把整个备份创建链路打断。
+    // 版本号属于纯元数据，取不到不应影响备份可用性，故降级为 unknown。
+    String appVersion = 'unknown';
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      appVersion = packageInfo.version;
+    } catch (e) {
+      debugPrint('⚠️ 读取应用版本信息失败，备份元数据降级为 unknown: $e');
+    }
+    step('appVersion($appVersion)');
 
     // 收集站点配置
     final siteConfigs = await _storageService.loadSiteConfigs(
       includeApiKeys: true,
     );
     data['siteConfigs'] = siteConfigs.map((config) => config.toJson()).toList();
+    step('siteConfigs(${siteConfigs.length})');
 
     // 收集当前激活的站点ID
     final activeSiteId = await _storageService.getActiveSiteId();
     data['activeSiteId'] = activeSiteId;
+    step('activeSiteId');
 
     // 收集下载器配置
     final downloaderConfigs = await _storageService.loadDownloaderConfigs();
     data['downloaderConfigs'] = downloaderConfigs;
+    step('downloaderConfigs(${downloaderConfigs.length})');
 
     // 收集默认下载器ID
     final defaultDownloaderId = await _storageService.loadDefaultDownloaderId();
@@ -145,6 +179,7 @@ class BackupService {
       }
     }
     data['downloaderPasswords'] = downloaderPasswords;
+    step('downloaderPasswords(${downloaderPasswords.length})');
 
     // 收集用户偏好设置
     data['userPreferences'] = {
@@ -154,7 +189,10 @@ class BackupService {
       'autoLoadImages': await _storageService.loadAutoLoadImages(),
       'defaultDownloadSettings': {
         'category': await _storageService.loadDefaultDownloadCategory(),
-        'tags': await _storageService.loadDefaultDownloadTags(),
+        'tags': await safeList(
+          'defaultDownloadTags',
+          _storageService.loadDefaultDownloadTags,
+        ),
         'savePath': await _storageService.loadDefaultDownloadSavePath(),
       },
       'proxy': {
@@ -164,9 +202,13 @@ class BackupService {
         'username': await _storageService.loadProxyUsername(),
         'password': await _storageService.loadProxyPassword(),
         'bypassLan': await _storageService.loadProxyBypassLan(),
-        'bypassRules': await _storageService.loadProxyBypassRules(),
+        'bypassRules': await safeList(
+          'proxyBypassRules',
+          _storageService.loadProxyBypassRules,
+        ),
       },
     };
+    step('userPreferences');
 
     // 收集下载器的分类和标签缓存
     final downloaderCategoriesCache = <String, List<String>>{};
@@ -174,23 +216,34 @@ class BackupService {
     for (final config in downloaderConfigs) {
       final configId = config['id'] as String?;
       if (configId != null) {
-        downloaderCategoriesCache[configId] = await _storageService
-            .loadDownloaderCategories(configId);
-        downloaderTagsCache[configId] = await _storageService
-            .loadDownloaderTags(configId);
+        downloaderCategoriesCache[configId] = await safeList(
+          'downloaderCategories($configId)',
+          () => _storageService.loadDownloaderCategories(configId),
+        );
+        downloaderTagsCache[configId] = await safeList(
+          'downloaderTags($configId)',
+          () => _storageService.loadDownloaderTags(configId),
+        );
       }
     }
     data['downloaderCategoriesCache'] = downloaderCategoriesCache;
     data['downloaderTagsCache'] = downloaderTagsCache;
+    step('downloaderCaches');
 
     // 收集聚合搜索设置
     final aggregateSearchSettings = await _storageService
         .loadAggregateSearchSettings();
     data['aggregateSearchSettings'] = aggregateSearchSettings.toJson();
+    step('aggregateSearchSettings');
 
     // 收集 Cookie Cloud 配置
     final cookieCloudConfig = await _storageService.loadCookieCloudConfig();
     data['cookieCloudConfig'] = cookieCloudConfig.toJson();
+    step('cookieCloudConfig');
+
+    // 序列化：这一步最容易暴露「某字段不是可编码类型」的问题
+    final encoded = jsonEncode(backup0(data));
+    step('jsonEncode(${encoded.length} bytes)');
 
     data['deviceId'] = await _storageService.loadDeviceId();
     final webdavConfig = await _webdavService.loadConfig();
@@ -211,10 +264,16 @@ class BackupService {
     return BackupData(
       version: BackupVersion.current,
       timestamp: DateTime.now(),
-      appVersion: packageInfo.version,
+      appVersion: appVersion,
       data: data,
     );
   }
+
+  /// 辅助：在打点用 data 上做一次完整序列化探测。
+  /// 与 BackupData.toJson 的差异只在 version/timestamp/appVersion 三个
+  /// 纯文本字段，编码行为一致。
+  static String backup0(Map<String, dynamic> data) =>
+      jsonEncode({'data': data});
 
   // 导出备份到文件
   Future<String?> exportBackup({
@@ -234,7 +293,7 @@ class BackupService {
             (await getDownloadsDirectory())?.path ??
             Platform.environment['HOME'] ??
             Directory.current.path;
-        result = await FilePicker.saveFile(
+        result = await FilePicker.platform.saveFile(
           dialogTitle: '导出备份文件',
           fileName: prepared.fileName,
           initialDirectory: initialDirectory,
@@ -252,19 +311,31 @@ class BackupService {
         }
       } else {
         onProgress?.call('正在导出备份...');
-        result = await FilePicker.saveFile(
+        // [移植适配-OHOS] release 下 debugPrint 不输出，改用 print 保证 hilog 可见
+        // ignore: avoid_print
+        print('📤 备份导出: 调用 FilePicker.saveFile (fileName=${prepared.fileName})');
+        result = await FilePicker.platform.saveFile(
           dialogTitle: '导出备份文件',
           fileName: prepared.fileName,
           type: FileType.custom,
           allowedExtensions: ['json'],
           bytes: utf8.encode(prepared.content),
         );
+        debugPrint('📤 备份导出: FilePicker.saveFile 返回=$result');
       }
 
       return result;
-    } on SecureStorageUnavailableException {
+    } on SecureStorageUnavailableException catch (e) {
+      // [移植适配-OHOS] 之前静默抛出，应用日志毫无痕迹，无法定位。
+      debugPrint('⛔ 导出备份失败(secure storage): $e');
+      debugPrint(StackTrace.current.toString());
       rethrow;
-    } catch (e) {
+    } catch (e, st) {
+      // [移植适配-OHOS] release 下 debugPrint 不输出，改用 print 保证 hilog 可见
+      // ignore: avoid_print
+      print('⛔ 导出备份失败: $e');
+      // ignore: avoid_print
+      print(st.toString());
       throw BackupException('导出备份失败: $e');
     }
   }
@@ -287,7 +358,7 @@ class BackupService {
       // action. This rejects incomplete or structurally invalid snapshots.
       BackupData.fromJson(jsonDecode(content) as Map<String, dynamic>);
       onProgress?.call('请选择本地备份保存位置...');
-      final path = await FilePicker.saveFile(
+      final path = await FilePicker.platform.saveFile(
         dialogTitle: '迁移前导出安全备份',
         fileName: fileName,
         type: FileType.custom,
@@ -306,7 +377,7 @@ class BackupService {
   // 从文件导入备份
   Future<BackupData?> importBackup() async {
     try {
-      final result = await FilePicker.pickFiles(
+      final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['json'],
         dialogTitle: '选择备份文件',
@@ -596,6 +667,7 @@ class BackupService {
 
       // 检查WebDAV配置
       onProgress?.call('正在检查导出方式...');
+      _webdavService.lastClientFailureReason = null;
       final webdavConfig = await _webdavService.loadConfig();
       if (webdavConfig != null && webdavConfig.isEnabled) {
         try {
@@ -613,10 +685,12 @@ class BackupService {
         } on SecureStorageUnavailableException {
           rethrow;
         } catch (e) {
+          debugPrint('⛔ WebDAV 上传失败: $e');
           // WebDAV上传失败，在Linux平台上直接抛出异常，避免文件选择器问题
           if (defaultTargetPlatform == TargetPlatform.linux) {
             throw BackupException('WebDAV备份失败: $e');
           }
+          debugPrint('⛔ WebDAV 上传失败，回退本地导出');
           // 在移动平台上，WebDAV失败时回退到本地导出
           return await exportBackup();
         }
@@ -628,7 +702,7 @@ class BackupService {
               (await getDownloadsDirectory())?.path ??
               Platform.environment['HOME'] ??
               Directory.current.path;
-          final result = await FilePicker.saveFile(
+          final result = await FilePicker.platform.saveFile(
             dialogTitle: '导出备份文件',
             fileName: prepared.fileName,
             initialDirectory: initialDirectory,
@@ -648,7 +722,7 @@ class BackupService {
         }
 
         onProgress?.call('正在导出备份...');
-        return await FilePicker.saveFile(
+        return await FilePicker.platform.saveFile(
           dialogTitle: '导出备份文件',
           fileName: prepared.fileName,
           type: FileType.custom,
@@ -656,9 +730,13 @@ class BackupService {
           bytes: utf8.encode(prepared.content),
         );
       }
-    } on SecureStorageUnavailableException {
+    } on SecureStorageUnavailableException catch (e) {
+      debugPrint('⛔ WebDAV 导出失败(secure storage): $e');
+      debugPrint(StackTrace.current.toString());
       rethrow;
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('⛔ WebDAV 导出失败: $e');
+      debugPrint(st.toString());
       throw BackupException('备份失败: $e');
     }
   }

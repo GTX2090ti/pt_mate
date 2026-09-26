@@ -1,5 +1,5 @@
 name: pt_mate
-description: "PT Mate - A private tracker torrent management app."
+description: "PT-Mate - A private tracker torrent management app."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -19,7 +19,8 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 2.29.1-beta+189
 
 environment:
-  sdk: ^3.13.0
+  # [移植适配-OHOS] 上游要求 Dart 3.13；鸿蒙定制 SDK 暂无 Dart≥3.13 版本，暂放宽到 ^3.11.0，升级工具链后恢复。
+  sdk: ^3.11.0
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -48,21 +49,26 @@ dependencies:
   dynamic_color: ^1.7.0
   flutter_colorpicker: ^1.1.0
   url_launcher: ^6.3.1
-  package_info_plus: ^10.1.0
-  flutter_local_notifications: ^22.0.1
-  ota_update: ^7.0.2
-  device_info_plus: ^13.1.0
+  package_info_plus: ^8.3.0
+  # flutter_local_notifications: ^22.0.1 # 无 ohos 端口，鸿蒙移植禁用（移植自留 TODO stub）
+  # flutter_downloader: ^1.11.8 # lib 零引用，移除
+  # ota_update: ^7.0.2 # 无 ohos 端口，鸿蒙移植禁用
+  device_info_plus: ^11.3.0
   dart_jsonwebtoken: ^3.1.1
   crypto: ^3.0.3
   encrypt: ^5.0.3
   flutter_bbcode: ^1.5.1
   bbob_dart: ^0.2.1
   archive: ^4.0.9
-  webview_flutter: ^4.9.0
-  webview_flutter_android: ^4.12.0
-  flutter_inappwebview: ^6.0.0
+  # webview_flutter: ^4.9.0 # lib 零引用（统一用 flutter_inappwebview），移除
+  # webview_flutter_android: ^4.12.0 # 同上
+  # [移植适配-OHOS] flutter_inappwebview 6.1.5 官方无 ohos 端口，
+  # 改用 OpenHarmony-SIG 维护的鸿蒙移植版 br_v6.1.5_ohos 分支（底层走系统 ArkWeb 内核）。
+  # 注：git 依赖在 Windows 无开发者模式下需 symlink 无法解析，落为本地副本 path 依赖。
+  flutter_inappwebview:
+    path: packages/flutter_inappwebview_ohos/flutter_inappwebview
   beautiful_soup_dart: ^0.3.0
-  file_picker: ^12.0.0-beta.1
+  file_picker: ^10.3.0
   webdav_client: ^1.2.2
   flutter_svg: ^2.0.10
   uuid: ^4.5.1
@@ -70,7 +76,7 @@ dependencies:
   logger: ^2.6.2
   get_it: ^9.0.5
   image: ^4.1.7
-  share_plus: ^13.1.0
+  share_plus: ^11.0.0
   xml: ^7.0.1
   html: ^0.15.6
   flutter_widget_from_html_core: ^0.17.0
@@ -139,12 +145,25 @@ flutter:
   # see https://flutter.dev/to/font-from-package
 
 dependency_overrides:
-  # webdav_client 1.2.2 still declares xml ^6.2.2, but only uses DOM APIs
+  # [上游] webdav_client 1.2.2 still declares xml ^6.2.2, but only uses DOM APIs
   # retained by xml 7. Keep the project on the audited xml 7 line.
   xml: ^7.0.1
-  # encrypt 5.0.3 still caps PointyCastle at 3.x. Its AES surface used here is
+  # [上游] encrypt 5.0.3 still caps PointyCastle at 3.x. Its AES surface used here is
   # compatible with 4.x, which is required by dart_jsonwebtoken 3.4.1.
   pointycastle: ^4.0.0
+  # [移植适配-OHOS] flutter_secure_storage 10.x 的平台白名单只覆盖
+  # web/linux/iOS/Android/Windows/macOS，ohos 会落到 _selectOptions() 的
+  # else 分支直接抛 UnsupportedError，调用根本到不了 MethodChannel，
+  # 表现为启动时 code=unsupportederror。此处指向本地补丁副本（已加 ohos 分支），
+  # 配合 ArkTS 侧实现（plugins.it_nomads.com/flutter_secure_storage）完成闭环。
+  flutter_secure_storage:
+    path: packages/flutter_secure_storage_ohos
+  # [移植适配-OHOS] file_picker 10.x 无 ohos 实现：
+  #   - pickFiles 走 MethodChannel 但无接收端 → MissingPluginException
+  #   - saveFile  因 Platform.isAndroid/isIOS 均为 false，落到基类 throw UnimplementedError
+  # 本地副本补了 isOhos 分支，配合 ArkTS 侧 FilePickerOhos.ets（系统 DocumentViewPicker）闭环。
+  file_picker:
+    path: packages/file_picker_ohos
 
 
 flutter_launcher_icons:

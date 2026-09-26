@@ -1033,8 +1033,8 @@ class MainActivity : FlutterActivity() {
         const val SECURE_STORAGE_PROFILE_CHANNEL = "pt_mate/secure_storage_profile"
         const val ANDROID_KEYSTORE_PROVIDER = "AndroidKeyStore"
         const val ANDROID_KEYSTORE_CIPHER_PROVIDER = "AndroidKeyStoreBCWorkaround"
-        const val DOWNLOADS_SUBDIRECTORY = "PT Mate"
-        const val DOWNLOADS_DISPLAY_PATH = "Downloads/PT Mate"
+        const val DOWNLOADS_SUBDIRECTORY = "PT-Mate"
+        const val DOWNLOADS_DISPLAY_PATH = "Downloads/PT-Mate"
 
         const val SECURE_STORAGE_DATA_PREFS = "FlutterSecureStorage"
         const val SECURE_STORAGE_KEY_PREFS = "FlutterSecureKeyStorage"
@@ -1059,3 +1059,4 @@ class MainActivity : FlutterActivity() {
         val SECURE_STORAGE_TEST_PROFILES = setOf("oaepGcm", "pkcs1Gcm", "pkcs1Cbc")
     }
 }
+

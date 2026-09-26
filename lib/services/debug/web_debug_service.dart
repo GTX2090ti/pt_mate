@@ -209,7 +209,7 @@ class WebDebugService {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PTMate Web 调试</title>
+  <title>PT-Mate Web 调试</title>
   <style>
     body { font-family: system-ui, sans-serif; padding: 16px; }
     label { display:block; margin-top:12px; }
@@ -219,7 +219,7 @@ class WebDebugService {
   </style>
   </head>
 <body>
-  <h2>PTMate Web 调试</h2>
+  <h2>PT-Mate Web 调试</h2>
   <label>站点地址
     <input id="siteUrl" placeholder="https://example.com" />
   </label>

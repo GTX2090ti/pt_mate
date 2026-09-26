@@ -749,7 +749,7 @@ class _ServerSettingsPageState extends State<ServerSettingsPage> {
                     itemCount: _sites.length,
                     onReorderStart: _onReorderStart,
                     onReorderEnd: (_) => _endReorderDrag(),
-                    onReorderItem: (oldIndex, newIndex) {
+                    onReorder: (oldIndex, newIndex) {
                       setState(() {
                         final item = _sites.removeAt(oldIndex);
                         _sites.insert(

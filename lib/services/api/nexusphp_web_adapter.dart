@@ -686,6 +686,24 @@ class NexusPHPWebAdapter extends SiteAdapter
       // 在 Isolate 中执行解析
       final result = await compute(_parseSearchResponseInIsolate, parseParams);
 
+      // [移植适配-OHOS] 封面统计：用于区分「页面里根本没解析出封面字段」
+      // 与「封面 URL 存在但加载失败」两类问题——两者在 UI 上都是空白。
+      // 解析在 Isolate 中完成，这里打日志才能进应用日志文件。
+      final totalItems = result.items.length;
+      final withCover = result.items
+          .where((item) => item.cover.isNotEmpty)
+          .length;
+      debugPrint(
+        '🖼️ 封面统计[${_siteConfig.name}]: 共$totalItems条，'
+        '有封面$withCover条，无封面${totalItems - withCover}条',
+      );
+      for (final item in result.items.take(3)) {
+        if (item.cover.isNotEmpty) {
+          debugPrint('🖼️ 封面URL样例[${_siteConfig.name}]: ${item.cover}');
+          break;
+        }
+      }
+
       return TorrentSearchResult(
         pageNumber: pageNumber,
         pageSize: pageSize,

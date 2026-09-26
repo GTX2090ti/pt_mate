@@ -1,15 +1,22 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:dio/dio.dart';
 import '../services/storage/storage_service.dart';
 import '../services/downloader/downloader_config.dart';
 import '../services/downloader/downloader_service.dart';
 import '../services/downloader/downloader_models.dart';
+import '../services/downloader/seed_health_monitor.dart';
+import '../services/downloader/disk_guard_service.dart';
 import '../utils/format.dart';
 
 import '../widgets/responsive_layout.dart';
 import '../widgets/qb_speed_indicator.dart';
 import 'downloader_settings_page.dart';
 import 'package:pt_mate/utils/notification_helper.dart';
+import 'tracker_manager_page.dart';
+import 'download_health_page.dart';
+import 'qb_settings_page.dart';
+import '../widgets/category_picker_dialog.dart';
 import '../utils/screen_utils.dart';
 
 enum SortField {
@@ -33,6 +40,18 @@ class DownloadTasksPage extends StatefulWidget {
   State<DownloadTasksPage> createState() => _DownloadTasksPageState();
 }
 
+/// 任务状态筛选
+enum _TaskFilter {
+  all('全部'),
+  downloading('下载中'),
+  uploading('做种中'),
+  paused('已暂停'),
+  completed('已完成');
+
+  const _TaskFilter(this.label);
+  final String label;
+}
+
 class _DownloadTasksPageState extends State<DownloadTasksPage> {
   Timer? _refreshTimer;
   StreamSubscription<String>? _configChangeSubscription;
@@ -46,6 +65,11 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
   DownloaderConfig? _downloaderConfig;
   String? _password;
   bool _showAllTasks = false; // 控制是否显示全部任务
+  // ===== 专业增强状态 =====
+  bool _selectionMode = false; // 批量选择模式
+  final Set<String> _selectedHashes = {}; // 选中的任务哈希
+  DiskGuardConfig? _diskGuardConfig; // 磁盘守卫配置
+  List<DownloadTask> _readyToDelete = []; // 已达可删种标准的任务
   String _searchQuery = ''; // 搜索关键词
   final TextEditingController _searchController = TextEditingController();
 
@@ -53,9 +77,19 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
   SortField _sortField = SortField.addedOn;
   bool _sortAscending = false;
 
+  // 状态筛选 Tab（qB 风格）
+  _TaskFilter _statusFilter = _TaskFilter.all;
+
   @override
   void initState() {
     super.initState();
+    StorageService.instance.loadDownloadTasksShowAll().then((value) {
+      if (mounted) {
+        setState(() {
+          _showAllTasks = value;
+        });
+      }
+    });
     _loadDownloaderConfig();
     _startAutoRefresh();
 
@@ -77,12 +111,15 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
     super.dispose();
   }
 
-  // 启动自动刷新
+  // 启动自动刷新（间隔从设置读取）
   void _startAutoRefresh() {
-    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
-      if (_downloaderConfig != null && _password != null && mounted) {
-        _loadTasks(silent: true); // 使用静默模式
-      }
+    StorageService.instance.loadDownloadTasksRefreshInterval().then((seconds) {
+      if (!mounted) return;
+      _refreshTimer = Timer.periodic(Duration(seconds: seconds), (timer) {
+        if (_downloaderConfig != null && _password != null && mounted) {
+          _loadTasks(silent: true); // 使用静默模式
+        }
+      });
     });
   }
 
@@ -182,10 +219,17 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
         client.getServerState(),
       ]);
 
+      final diskConfig = await DiskGuardService.instance.loadConfig();
+      final seedConfig = await SeedHealthMonitor.instance.loadConfig();
+      final tasks = futures[0] as List<DownloadTask>;
+      final ready = SeedHealthMonitor.findReadyToDelete(tasks, seedConfig);
+
       setState(() {
-        _tasks = futures[0] as List<DownloadTask>;
+        _tasks = tasks;
         _transferInfo = futures[1] as TransferInfo;
         _serverState = futures[2] as ServerState;
+        _diskGuardConfig = diskConfig;
+        _readyToDelete = ready;
         if (!silent) _isLoading = false;
         _errorMessage = null; // 清除错误信息
       });
@@ -194,10 +238,27 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
       if (!silent) {
         setState(() {
           _isLoading = false;
-          _errorMessage = '加载任务失败: $e';
+          _errorMessage = _friendlyTaskError(e);
         });
       }
     }
+  }
+
+  /// 把下载器连接异常转成可操作的中文提示
+  String _friendlyTaskError(Object e) {
+    if (e is DioException) {
+      switch (e.type) {
+        case DioExceptionType.connectionTimeout:
+        case DioExceptionType.sendTimeout:
+        case DioExceptionType.receiveTimeout:
+          return '连接下载器超时：请检查手机与下载器是否在同一网络（WiFi 下访问内网地址；流量下需公网地址/内网穿透）';
+        case DioExceptionType.connectionError:
+          return '无法连接下载器：请确认下载器在线、地址端口正确，且手机网络可访问该地址';
+        default:
+          break;
+      }
+    }
+    return '加载任务失败: $e';
   }
 
   @override
@@ -205,8 +266,45 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
     return ResponsiveLayout(
       currentRoute: '/download_tasks',
       appBar: AppBar(
-        title: const Text('下载管理'),
-        actions: const [QbSpeedIndicator()],
+        title: Text(_selectionMode ? '已选 ${_selectedHashes.length} 项' : '下载管理'),
+        leading: _selectionMode
+            ? IconButton(
+                tooltip: '退出批量选择',
+                icon: const Icon(Icons.close),
+                onPressed: () {
+                  setState(() {
+                    _selectionMode = false;
+                    _selectedHashes.clear();
+                  });
+                },
+              )
+            : null,
+        actions: [
+          if (_selectionMode) ...[
+            IconButton(
+              tooltip: '全选',
+              icon: const Icon(Icons.select_all),
+              onPressed: _selectAll,
+            ),
+            IconButton(
+              tooltip: '批量暂停',
+              icon: const Icon(Icons.pause),
+              onPressed: _selectedHashes.isEmpty ? null : () => _bulkPause(),
+            ),
+            IconButton(
+              tooltip: '批量恢复',
+              icon: const Icon(Icons.play_arrow),
+              onPressed: _selectedHashes.isEmpty ? null : () => _bulkResume(),
+            ),
+            IconButton(
+              tooltip: '批量删除',
+              icon: const Icon(Icons.delete_outline),
+              onPressed: _selectedHashes.isEmpty ? null : () => _bulkDelete(),
+            ),
+          ] else ...[
+            const QbSpeedIndicator(),
+          ],
+        ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -268,6 +366,15 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
                             textAlign: TextAlign.center,
                           ),
                   ),
+                if (_serverState != null &&
+                    _diskGuardConfig != null &&
+                    DiskGuardService.instance.isWarning(
+                      _serverState!.freeSpaceOnDisk,
+                      _diskGuardConfig!,
+                    ))
+                  _buildDiskWarningBanner(),
+                if (_readyToDelete.isNotEmpty && !_selectionMode)
+                  _buildSeedHealthBanner(),
                 // 搜索和过滤UI
                 _buildSearchAndFilterBar(),
                 // 传输状态指示
@@ -316,6 +423,34 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
                   },
                   child: const Icon(Icons.refresh),
                 ),
+              const SizedBox(height: 16),
+              // 设置入口（右下角方形齿轮按钮，打开 qB 风格设置页）
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: IconButton(
+                  tooltip: '设置',
+                  icon: const Icon(Icons.settings, color: Colors.white),
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const QbSettingsPage(),
+                      ),
+                    );
+                  },
+                ),
+              ),
             ],
           );
         },
@@ -375,6 +510,295 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
       NotificationHelper.showError(context, '删除任务失败: $e');
     }
   }
+  // ===== 批量操作 =====
+  void _selectAll() {
+    setState(() {
+      if (_selectedHashes.length == _tasks.length) {
+        _selectedHashes.clear();
+      } else {
+        _selectedHashes.addAll(_tasks.map((t) => t.hash));
+      }
+    });
+  }
+
+  Future<void> _bulkPause() async {
+    try {
+      final client = _getClient();
+      if (client == null) return;
+      await client.pauseTasks(_selectedHashes.toList());
+      if (!mounted) return;
+      NotificationHelper.showInfo(context, '已暂停 ' + _selectedHashes.length.toString() + ' 个任务');
+      setState(() {
+        _selectionMode = false;
+        _selectedHashes.clear();
+      });
+      await _loadTasks(silent: true);
+    } catch (e) {
+      if (!mounted) return;
+      NotificationHelper.showError(context, '批量暂停失败: ' + e.toString());
+    }
+  }
+
+  Future<void> _bulkResume() async {
+    try {
+      final client = _getClient();
+      if (client == null) return;
+      await client.resumeTasks(_selectedHashes.toList());
+      if (!mounted) return;
+      NotificationHelper.showInfo(context, '已恢复 ' + _selectedHashes.length.toString() + ' 个任务');
+      setState(() {
+        _selectionMode = false;
+        _selectedHashes.clear();
+      });
+      await _loadTasks(silent: true);
+    } catch (e) {
+      if (!mounted) return;
+      NotificationHelper.showError(context, '批量恢复失败: ' + e.toString());
+    }
+  }
+
+  Future<void> _bulkDelete() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('批量删除'),
+        content: const Text('是否同时删除文件？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('仅任务'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('同时删除文件'),
+          ),
+        ],
+      ),
+    );
+    if (confirm == null) return;
+    try {
+      final client = _getClient();
+      if (client == null) return;
+      await client.deleteTasks(_selectedHashes.toList(), deleteFiles: confirm);
+      if (!mounted) return;
+      NotificationHelper.showInfo(context, '已删除 ' + _selectedHashes.length.toString() + ' 个任务');
+      setState(() {
+        _selectionMode = false;
+        _selectedHashes.clear();
+      });
+      await _loadTasks(silent: true);
+    } catch (e) {
+      if (!mounted) return;
+      NotificationHelper.showError(context, '批量删除失败: ' + e.toString());
+    }
+  }
+
+  // 修改单个任务分类
+  Future<void> _setTaskCategory(DownloadTask task) async {
+    final config = _downloaderConfig;
+    final pwd = _password;
+    if (config == null || (pwd ?? '').isEmpty) {
+      NotificationHelper.showError(context, '未配置下载器');
+      return;
+    }
+    final category = await CategoryPickerDialog.show(
+      context,
+      config: config,
+      password: pwd!,
+      allowCreate: true,
+    );
+    if (category == null) return;
+    try {
+      await DownloaderService.instance.setCategory(
+        config: config,
+        password: pwd,
+        hashes: [task.hash],
+        category: category,
+      );
+      if (!mounted) return;
+      NotificationHelper.showInfo(
+        context,
+        category.isEmpty ? '已清除分类' : '已分类为：$category',
+      );
+      await _loadTasks(silent: true);
+    } catch (e) {
+      if (!mounted) return;
+      NotificationHelper.showError(context, '修改分类失败: $e');
+    }
+  }
+
+  // 批量修改分类
+  Future<void> _bulkSetCategory() async {
+    final config = _downloaderConfig;
+    final pwd = _password;
+    if (config == null || (pwd ?? '').isEmpty) {
+      NotificationHelper.showError(context, '未配置下载器');
+      return;
+    }
+    final category = await CategoryPickerDialog.show(
+      context,
+      config: config,
+      password: pwd!,
+      allowCreate: true,
+    );
+    if (category == null) return;
+    try {
+      await DownloaderService.instance.setCategory(
+        config: config,
+        password: pwd,
+        hashes: _selectedHashes.toList(),
+        category: category,
+      );
+      if (!mounted) return;
+      NotificationHelper.showInfo(
+        context,
+        '已为 ${_selectedHashes.length} 个任务设置分类：$category',
+      );
+      setState(() {
+        _selectionMode = false;
+        _selectedHashes.clear();
+      });
+      await _loadTasks(silent: true);
+    } catch (e) {
+      if (!mounted) return;
+      NotificationHelper.showError(context, '批量修改分类失败: $e');
+    }
+  }
+
+  Future<void> _setPriority(int priority) async {
+    try {
+      final client = _getClient();
+      if (client == null) return;
+      await client.setTorrentPriority(_selectedHashes.toList(), priority);
+      if (!mounted) return;
+      NotificationHelper.showInfo(context, '优先级已更新');
+      setState(() {
+        _selectionMode = false;
+        _selectedHashes.clear();
+      });
+      await _loadTasks(silent: true);
+    } catch (e) {
+      if (!mounted) return;
+      NotificationHelper.showError(context, '设置优先级失败: ' + e.toString());
+    }
+  }
+
+  void _showPriorityMenu() {
+    showModalBottomSheet<int>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: const Text(
+                '批量操作',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              trailing: IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.pop(sheetContext),
+              ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.skip_next),
+              title: const Text('优先级: 跳过'),
+              subtitle: const Text('不参与下载队列'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _setPriority(-1);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.horizontal_rule),
+              title: const Text('优先级: 普通'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _setPriority(0);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.arrow_upward),
+              title: const Text('优先级: 高'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _setPriority(1);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.vertical_align_top),
+              title: const Text('优先级: 最高'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _setPriority(2);
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.folder_copy_outlined),
+              title: const Text('批量修改分类'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _bulkSetCategory();
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.replay),
+              title: const Text('批量重新校验'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _bulkRecheck();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.sync),
+              title: const Text('批量重新宣告'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _bulkReannounce();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _bulkRecheck() async {
+    try {
+      final client = _getClient();
+      if (client == null) return;
+      await client.recheckTorrents(_selectedHashes.toList());
+      if (!mounted) return;
+      NotificationHelper.showInfo(context, '已发起 ' + _selectedHashes.length.toString() + ' 个任务校验');
+      setState(() {
+        _selectionMode = false;
+        _selectedHashes.clear();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      NotificationHelper.showError(context, '批量校验失败: ' + e.toString());
+    }
+  }
+
+  Future<void> _bulkReannounce() async {
+    try {
+      final client = _getClient();
+      if (client == null) return;
+      await client.reannounceTorrents(_selectedHashes.toList());
+      if (!mounted) return;
+      NotificationHelper.showInfo(context, '已重新宣告 ' + _selectedHashes.length.toString() + ' 个任务');
+      setState(() {
+        _selectionMode = false;
+        _selectedHashes.clear();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      NotificationHelper.showError(context, '批量重新宣告失败: ' + e.toString());
+    }
+  }
 
   // 构建搜索和过滤UI
   Widget _buildSearchAndFilterBar() {
@@ -382,6 +806,37 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Column(
         children: [
+          // 状态筛选 Tab（qB 风格）
+          SizedBox(
+            height: 36,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: _TaskFilter.values.map((f) {
+                final selected = _statusFilter == f;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(f.label),
+                    selected: selected,
+                    showCheckmark: false,
+                    onSelected: (_) {
+                      setState(() {
+                        _statusFilter = f;
+                      });
+                    },
+                    labelStyle: TextStyle(
+                      fontSize: 12,
+                      fontWeight: selected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 8),
           Row(
             children: [
               // 搜索框
@@ -560,20 +1015,121 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
     );
   }
 
+  Widget _buildDiskWarningBanner() {
+    return Material(
+      color: Theme.of(context).colorScheme.errorContainer,
+      child: InkWell(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const DownloadHealthPage(),
+            ),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              Icon(
+                Icons.warning_amber,
+                size: 16,
+                color: Theme.of(context).colorScheme.onErrorContainer,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '磁盘空间不足：剩余 ' +
+                      Formatters.dataFromBytes(_serverState!.freeSpaceOnDisk) +
+                      '，点击查看详情',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.onErrorContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSeedHealthBanner() {
+    return Material(
+      color: Colors.green.withValues(alpha: 0.12),
+      child: InkWell(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const DownloadHealthPage(),
+            ),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              Icon(Icons.eco, size: 16, color: Colors.green.shade700),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _readyToDelete.length.toString() + ' 个任务已达可删种标准，点击查看',
+                  style: TextStyle(fontSize: 12, color: Colors.green.shade800),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildAllTasksList() {
-    // 首先根据状态过滤任务
-    List<DownloadTask> statusFilteredTasks = _showAllTasks
-        ? _tasks // 显示全部任务
-        : _tasks
-              .where(
-                (task) =>
-                    task.state == DownloadTaskState.downloading ||
-                    task.state == DownloadTaskState.uploading ||
-                    task.state == DownloadTaskState.pausedDL ||
-                    task.state == DownloadTaskState.stalledDL ||
-                    task.state == DownloadTaskState.stoppedDL,
-              )
-              .toList(); // 只显示活跃状态的任务
+    // 首先根据状态 Tab 过滤任务
+    List<DownloadTask> statusFilteredTasks = _tasks.where((task) {
+      switch (_statusFilter) {
+        case _TaskFilter.all:
+          return true;
+        case _TaskFilter.downloading:
+          return DownloadTaskState.isDownloading(task.state) ||
+              task.state == DownloadTaskState.queuedDL ||
+              task.state == DownloadTaskState.checkingDL ||
+              task.state == DownloadTaskState.allocating ||
+              task.state == DownloadTaskState.checkingResumeData ||
+              task.state == DownloadTaskState.moving;
+        case _TaskFilter.uploading:
+          return task.state == DownloadTaskState.uploading ||
+              task.state == DownloadTaskState.forcedUP ||
+              task.state == DownloadTaskState.stalledUP ||
+              task.state == DownloadTaskState.queuedUP ||
+              task.state == DownloadTaskState.checkingUP;
+        case _TaskFilter.paused:
+          return DownloadTaskState.isPaused(task.state) ||
+              task.state == DownloadTaskState.stoppedDL;
+        case _TaskFilter.completed:
+          return task.progress >= 1.0 &&
+              (task.state == DownloadTaskState.uploading ||
+                  task.state == DownloadTaskState.forcedUP ||
+                  task.state == DownloadTaskState.stalledUP ||
+                  task.state == DownloadTaskState.queuedUP ||
+                  task.state == DownloadTaskState.checkingUP ||
+                  task.state == DownloadTaskState.pausedUP);
+      }
+    }).toList();
+
+    // 兼容旧开关：showAll 为 false 时仅显示活跃状态
+    if (!_showAllTasks && _statusFilter == _TaskFilter.all) {
+      statusFilteredTasks = statusFilteredTasks
+          .where(
+            (task) =>
+                task.state == DownloadTaskState.downloading ||
+                task.state == DownloadTaskState.uploading ||
+                task.state == DownloadTaskState.pausedDL ||
+                task.state == DownloadTaskState.stalledDL ||
+                task.state == DownloadTaskState.stoppedDL,
+          )
+          .toList();
+    }
 
     // 然后根据搜索关键词过滤任务名称
     final filteredTasks = _searchQuery.isEmpty
@@ -619,7 +1175,36 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
     });
 
     if (filteredTasks.isEmpty) {
-      return const Center(child: Text('没有下载任务'));
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.inbox_outlined,
+              size: 64,
+              color: Theme.of(context).colorScheme.outline,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '没有下载任务',
+              style: TextStyle(
+                fontSize: 16,
+                color: Theme.of(context).colorScheme.outline,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _searchQuery.isNotEmpty
+                  ? '换个关键词试试'
+                  : '下拉可刷新任务列表',
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.outline,
+              ),
+            ),
+          ],
+        ),
+      );
     }
 
     return RefreshIndicator(
@@ -756,39 +1341,129 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
         task.state == DownloadTaskState.stoppedDL ||
         task.state == DownloadTaskState.missingFiles;
 
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 4),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(
-          color: Theme.of(
-            context,
-          ).colorScheme.outlineVariant.withValues(alpha: 0.5),
+    final bool isSelected = _selectedHashes.contains(task.hash);
+    // 状态徽章文案与颜色
+    String statusText;
+    Color statusColor;
+    if (task.state == DownloadTaskState.error ||
+        task.state == DownloadTaskState.missingFiles) {
+      statusText = '错误';
+      statusColor = Theme.of(context).colorScheme.error;
+    } else if (task.progress >= 1.0) {
+      statusText = task.state == DownloadTaskState.pausedUP
+          ? '已完成·暂停'
+          : '已完成';
+      statusColor = Colors.green;
+    } else if (DownloadTaskState.isDownloading(task.state)) {
+      statusText = '下载中';
+      statusColor = Theme.of(context).colorScheme.primary;
+    } else if (DownloadTaskState.isPaused(task.state) ||
+        task.state == DownloadTaskState.stoppedDL) {
+      statusText = '已暂停';
+      statusColor = Theme.of(context).colorScheme.tertiary;
+    } else if (task.state == DownloadTaskState.uploading ||
+        task.state == DownloadTaskState.forcedUP ||
+        task.state == DownloadTaskState.stalledUP ||
+        task.state == DownloadTaskState.queuedUP ||
+        task.state == DownloadTaskState.checkingUP) {
+      statusText = '做种中';
+      statusColor = Colors.green;
+    } else {
+      statusText = '等待中';
+      statusColor = Theme.of(context).colorScheme.secondary;
+    }
+    return GestureDetector(
+      onTap: () {
+        if (_selectionMode) return;
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => TrackerManagerPage(
+              taskHash: task.hash,
+              taskName: task.name,
+            ),
+          ),
+        );
+      },
+      onLongPress: () {
+        setState(() {
+          _selectionMode = true;
+          _selectedHashes.add(task.hash);
+        });
+      },
+      child: Card(
+        margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 4),
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(
+            color: _selectionMode && isSelected
+                ? Theme.of(context).colorScheme.primary
+                : Theme.of(
+                    context,
+                  ).colorScheme.outlineVariant.withValues(alpha: 0.5),
+            width: _selectionMode && isSelected ? 2 : 1,
+          ),
         ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Top Row: Title and Actions
-            Row(
-              children: [
-                // Title and Info
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        task.name,
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Top Row: Title and Actions
+              Row(
+                children: [
+                  if (_selectionMode)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Icon(
+                        isSelected
+                            ? Icons.check_circle
+                            : Icons.radio_button_unchecked,
+                        size: 20,
+                        color: isSelected
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.outline,
                       ),
-                      const SizedBox(height: 4),
+                    ),
+                  // Title and Info
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                task.name,
+                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 1,
+                              ),
+                              decoration: BoxDecoration(
+                                color: statusColor.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                statusText,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                  color: statusColor,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
                       // Category and Tags
                       if (task.category.isNotEmpty || task.tags.isNotEmpty)
                         Padding(
@@ -970,35 +1645,58 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
                   ),
                 ),
                 // Actions
-                IconButton(
-                  icon: Icon(
-                    isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded,
-                    size: 20,
-                    color: Theme.of(context).colorScheme.primary,
+                if (_selectionMode)
+                  IconButton(
+                    icon: const Icon(Icons.more_vert, size: 20),
+                    tooltip: '批量操作',
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    padding: EdgeInsets.zero,
+                    onPressed: _showPriorityMenu,
+                  )
+                else ...[
+                  IconButton(
+                    icon: Icon(
+                      isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                      size: 20,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    tooltip: isPaused ? '恢复' : '暂停',
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    padding: EdgeInsets.zero,
+                    onPressed: () =>
+                        isPaused ? _resumeTask(task.hash) : _pauseTask(task.hash),
                   ),
-                  tooltip: isPaused ? '恢复' : '暂停',
-                  constraints: const BoxConstraints(
-                    minWidth: 32,
-                    minHeight: 32,
+                  IconButton(
+                    icon: const Icon(Icons.folder_outlined, size: 20),
+                    tooltip: '修改分类',
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    padding: EdgeInsets.zero,
+                    onPressed: () => _setTaskCategory(task),
                   ),
-                  padding: EdgeInsets.zero,
-                  onPressed: () =>
-                      isPaused ? _resumeTask(task.hash) : _pauseTask(task.hash),
-                ),
-                IconButton(
-                  icon: const Icon(
-                    Icons.delete_outline,
-                    size: 20,
-                    color: Colors.red,
+                  IconButton(
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      size: 20,
+                      color: Colors.red,
+                    ),
+                    tooltip: '删除',
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    padding: EdgeInsets.zero,
+                    onPressed: () => _confirmDelete(task),
                   ),
-                  tooltip: '删除',
-                  constraints: const BoxConstraints(
-                    minWidth: 32,
-                    minHeight: 32,
-                  ),
-                  padding: EdgeInsets.zero,
-                  onPressed: () => _confirmDelete(task),
-                ),
+                ],
               ],
             ),
 
@@ -1038,6 +1736,7 @@ class _DownloadTasksPageState extends State<DownloadTasksPage> {
             ),
           ],
         ),
+      ),
       ),
     );
   }

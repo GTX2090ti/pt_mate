@@ -7,6 +7,7 @@ import '../../models/app_models.dart';
 import 'downloader_config.dart';
 import 'downloader_factory.dart';
 import 'downloader_models.dart';
+import 'qbittorrent_client.dart';
 import '../network/timeout_retry.dart';
 import '../storage/storage_service.dart';
 
@@ -270,6 +271,115 @@ class DownloaderService {
       password: password,
     );
     return await client.getVersion();
+  }
+
+  /// 新增分类（仅 qBittorrent）
+  Future<void> createCategory({
+    required DownloaderConfig config,
+    required String password,
+    required String category,
+    String? savePath,
+  }) async {
+    final client = DownloaderFactory.getClient(
+      config: config,
+      password: password,
+    );
+    if (client is QbittorrentClient) {
+      await client.createCategory(category, savePath: savePath);
+    } else {
+      throw Exception('当前下载器不支持分类管理');
+    }
+  }
+
+  /// 删除分类（仅 qBittorrent）
+  Future<void> deleteCategory({
+    required DownloaderConfig config,
+    required String password,
+    required String category,
+  }) async {
+    final client = DownloaderFactory.getClient(
+      config: config,
+      password: password,
+    );
+    if (client is QbittorrentClient) {
+      await client.deleteCategory(category);
+    } else {
+      throw Exception('当前下载器不支持分类管理');
+    }
+  }
+
+  /// 批量设置任务分类（仅 qBittorrent）
+  Future<void> setCategory({
+    required DownloaderConfig config,
+    required String password,
+    required List<String> hashes,
+    required String category,
+  }) async {
+    final client = DownloaderFactory.getClient(
+      config: config,
+      password: password,
+    );
+    if (client is QbittorrentClient) {
+      await client.setCategory(hashes, category);
+    } else {
+      throw Exception('当前下载器不支持分类管理');
+    }
+  }
+
+  /// 获取任务连接节点（仅 qBittorrent）
+  Future<List<TorrentPeer>> getTorrentPeers({
+    required DownloaderConfig config,
+    required String password,
+    required String hash,
+  }) async {
+    final client = DownloaderFactory.getClient(
+      config: config,
+      password: password,
+    );
+    if (client is QbittorrentClient) {
+      return await client.getTorrentPeers(hash);
+    }
+    throw Exception('当前下载器不支持节点查看');
+  }
+
+  /// 获取任务文件列表（仅 qBittorrent）
+  Future<List<TorrentFile>> getTorrentFiles({
+    required DownloaderConfig config,
+    required String password,
+    required String hash,
+  }) async {
+    final client = DownloaderFactory.getClient(
+      config: config,
+      password: password,
+    );
+    if (client is QbittorrentClient) {
+      return await client.getTorrentFiles(hash);
+    }
+    throw Exception('当前下载器不支持文件列表查看');
+  }
+
+  /// 设置文件优先级（仅 qBittorrent）
+  /// priority: 0=跳过(不下载) 1=普通 2=高 3=最高
+  Future<void> setFilePriority({
+    required DownloaderConfig config,
+    required String password,
+    required String hash,
+    required List<int> ids,
+    required int priority,
+  }) async {
+    final client = DownloaderFactory.getClient(
+      config: config,
+      password: password,
+    );
+    if (client is QbittorrentClient) {
+      await client.setFilePriority(
+        hash: hash,
+        ids: ids,
+        priority: priority,
+      );
+      return;
+    }
+    throw Exception('当前下载器不支持文件选择');
   }
 
   /// 获取现有下载路径列表

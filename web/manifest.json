@@ -1,11 +1,11 @@
 {
-    "name": "PT Mate",
-    "short_name": "PT Mate",
+    "name": "PT-Mate",
+    "short_name": "PT-Mate",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#hexcode",
     "theme_color": "#hexcode",
-    "description": "PT Mate - A private tracker torrent management app.",
+    "description": "PT-Mate - A private tracker torrent management app.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

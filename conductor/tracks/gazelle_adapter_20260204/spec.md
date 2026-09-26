@@ -1,7 +1,7 @@
 # Specification: Gazelle Site Adapter Integration
 
 ## Overview
-This track involves implementing a new site adapter for the Gazelle architecture within PT Mate and refactoring the existing Webview login widget to be generic. The reference site for implementation and testing is `https://mooko.org/`. The login process will utilize a generic Webview-based approach with a manual trigger for cookie capture.
+This track involves implementing a new site adapter for the Gazelle architecture within PT-Mate and refactoring the existing Webview login widget to be generic. The reference site for implementation and testing is `https://mooko.org/`. The login process will utilize a generic Webview-based approach with a manual trigger for cookie capture.
 
 ## Functional Requirements
 - **Generic Web Login Widget:**

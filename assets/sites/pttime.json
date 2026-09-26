@@ -219,7 +219,7 @@
         "isTop": {},
         "cover": {
           "selector": "table.torrentname > img.lazy-image",
-          "attribute": "data-src"
+          "attribute": "data-src|data-original|src"
         },
         "createDate": {
           "selector": "td:nth-child(5) > span[title]",

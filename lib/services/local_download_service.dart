@@ -20,7 +20,7 @@ class LocalDownloadService with TorrentFileDownloaderMixin {
 
   LocalDownloadService._();
 
-  static const String downloadsDisplayPath = 'Downloads/PT Mate';
+  static const String downloadsDisplayPath = 'Downloads/PT-Mate';
   static const MethodChannel _androidDownloadsChannel = MethodChannel(
     'pt_mate/local_downloads',
   );
@@ -110,7 +110,7 @@ class LocalDownloadService with TorrentFileDownloaderMixin {
 
   /// 批量下载种子文件并保存到本地。
   ///
-  /// Android 直接保存多个 .torrent 文件到 Downloads/PT Mate。
+  /// Android 直接保存多个 .torrent 文件到 Downloads/PT-Mate。
   /// 其他平台仍打包成 zip 并通过保存面板导出。
   Future<BatchLocalDownloadResult> batchDownloadAndSave({
     required List<TorrentDownloadItem> items,
@@ -301,7 +301,7 @@ class LocalDownloadService with TorrentFileDownloaderMixin {
 
   Future<String?> _saveWithPicker(String fileName, List<int> data) async {
     final initialDirectory = await _resolveInitialDirectory();
-    final result = await FilePicker.saveFile(
+    final result = await FilePicker.platform.saveFile(
       dialogTitle: '保存种子文件',
       fileName: fileName,
       initialDirectory: initialDirectory,

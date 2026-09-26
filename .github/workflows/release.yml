@@ -298,7 +298,7 @@ jobs:
         cat > AppDir/usr/share/applications/pt_mate.desktop << EOF
         [Desktop Entry]
         Type=Application
-        Name=PT Mate
+        Name=PT-Mate
         Comment=PT伴侣
         Exec=pt_mate
         Icon=pt_mate
@@ -568,7 +568,7 @@ jobs:
       
     - name: Create macOS DMG
       run: |
-        hdiutil create -volname "PT Mate ${{ steps.version.outputs.version }}" \
+        hdiutil create -volname "PT-Mate ${{ steps.version.outputs.version }}" \
           -srcfolder "build/macos/Build/Products/Release/pt_mate.app" \
           -ov -format UDZO \
           "build/macos/Build/Products/Release/pt_mate-${{ steps.version.outputs.version }}-macos-x64.dmg"
@@ -750,7 +750,7 @@ jobs:
           const releaseAssetLines = process.env.TG_RELEASE_ASSET_LINES || '';
 
           const sections = [
-            `# 🎉 PT Mate ${version} 发布了！`,
+            `# 🎉 PT-Mate ${version} 发布了！`,
             commitMsg,
           ];
 

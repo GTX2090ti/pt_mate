@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:ota_update/ota_update.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'update_service.dart';
 
@@ -438,112 +438,74 @@ class AppUpdateDownloader {
     required ValueChanged<AppUpdateProgress> onProgress,
     AppUpdateCancelToken? cancelToken,
   }) async {
-    final completer = Completer<void>();
-    final otaUpdate = OtaUpdate();
-    VoidCallback? removeCancelListener;
-
+    // 鸿蒙移植：ota_update 无 ohos 端口，改用 dio 流式下载到系统临时目录。
+    // Android 原行为是下载 APK 后由 ota_update 拉起系统安装；此处降级为仅下载。
+    // 如需恢复 Android 完整行为，从 .port_backup/app_update_downloader.dart 还原。
+    cancelToken?.throwIfCanceled();
+    final saveDir = await getTemporaryDirectory();
+    if (!saveDir.existsSync()) {
+      saveDir.createSync(recursive: true);
+    }
     final filenameVersion = (version ?? 'latest').replaceAll(
       RegExp(r'[^0-9A-Za-z._-]'),
       '_',
     );
-    final destinationFilename = 'pt_mate-$filenameVersion-arm64-v8a.apk';
+    final savePath =
+        '${saveDir.path}/pt_mate-$filenameVersion-arm64-v8a.apk';
 
-    late final StreamSubscription<OtaEvent> sub;
+    final dioCancelToken = CancelToken();
+    late final VoidCallback removeCancelListener;
     removeCancelListener = cancelToken?.addCancelListener(() {
-      otaUpdate.cancel();
-      if (!completer.isCompleted) {
-        completer.completeError(const AppUpdateCanceledException());
+      if (!dioCancelToken.isCancelled) {
+        dioCancelToken.cancel('app-update-canceled');
       }
-    });
-
-    sub = otaUpdate
-        .execute(url, destinationFilename: destinationFilename)
-        .listen(
-          (event) {
-            if (cancelToken?.isCanceled ?? false) {
-              if (!completer.isCompleted) {
-                completer.completeError(const AppUpdateCanceledException());
-              }
-              return;
-            }
-
-            final status = event.status.toString().split('.').last;
-            final value = event.value ?? '';
-
-            if (status == 'CANCELED') {
-              if (!completer.isCompleted) {
-                completer.completeError(const AppUpdateCanceledException());
-              }
-              return;
-            }
-
-            if (status == 'DOWNLOADING') {
-              final progressValue = double.tryParse(value);
-              final normalizedProgress = progressValue == null
-                  ? null
-                  : (progressValue.clamp(0, 100) / 100).toDouble();
-              final downloadedBytes =
-                  normalizedProgress == null || totalBytes == null
-                  ? null
-                  : (normalizedProgress * totalBytes).round();
-              onProgress(
-                AppUpdateProgress(
-                  message: _buildDownloadMessage(
-                    downloadedBytes: downloadedBytes,
-                    totalBytes: totalBytes,
-                    progressValue: progressValue,
-                  ),
-                  progress: normalizedProgress,
-                  downloadedBytes: downloadedBytes,
-                  totalBytes: totalBytes,
-                ),
-              );
-              return;
-            }
-
-            if (status == 'INSTALLING') {
-              onProgress(
-                AppUpdateProgress(
-                  message: totalBytes == null
-                      ? '下载完成，正在打开安装界面...'
-                      : '下载完成 ${_formatBytes(totalBytes)}，正在打开安装界面...',
-                  progress: 1,
-                  downloadedBytes: totalBytes,
-                  totalBytes: totalBytes,
-                  isFinal: true,
-                ),
-              );
-              if (!completer.isCompleted) {
-                completer.complete();
-              }
-              return;
-            }
-
-            if (status.contains('ERROR')) {
-              final err = value.isEmpty ? status : value;
-              if (!completer.isCompleted) {
-                completer.completeError(StateError(err));
-              }
-            }
-          },
-          onError: (e) {
-            if (!completer.isCompleted) {
-              completer.completeError(e);
-            }
-          },
-          onDone: () {
-            if (!completer.isCompleted) {
-              completer.complete();
-            }
-          },
-          cancelOnError: true,
-        );
+    }) ?? () {};
 
     try {
-      await completer.future;
+      await _probeDio.download(
+        url,
+        savePath,
+        cancelToken: dioCancelToken,
+        onReceiveProgress: (received, total) {
+          if (cancelToken?.isCanceled ?? false) return;
+          final effectiveTotal = total > 0 ? total : totalBytes;
+          final normalizedProgress = effectiveTotal == null || effectiveTotal <= 0
+              ? null
+              : (received / effectiveTotal).clamp(0.0, 1.0);
+          onProgress(
+            AppUpdateProgress(
+              message: _buildDownloadMessage(
+                downloadedBytes: received,
+                totalBytes: effectiveTotal,
+                progressValue:
+                    normalizedProgress == null ? null : normalizedProgress * 100,
+              ),
+              progress: normalizedProgress,
+              downloadedBytes: received,
+              totalBytes: effectiveTotal,
+            ),
+          );
+        },
+      );
+      cancelToken?.throwIfCanceled();
+      onProgress(
+        AppUpdateProgress(
+          message: totalBytes == null
+              ? '下载完成，已保存到临时目录'
+              : '下载完成 ${_formatBytes(totalBytes)}，已保存到临时目录',
+          progress: 1,
+          downloadedBytes: totalBytes,
+          totalBytes: totalBytes,
+          isFinal: true,
+        ),
+      );
+    } on DioException catch (e) {
+      if (CancelToken.isCancel(e)) {
+        throw const AppUpdateCanceledException();
+      }
+      throw StateError(e.message ?? '下载失败');
     } finally {
-      removeCancelListener?.call();
-      await sub.cancel();
+      removeCancelListener();
     }
   }
 

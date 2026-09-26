@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
 
+import '../network/proxy_service.dart';
+
 /// 站点异常基类
 /// 所有站点相关的异常都继承自此类
 class SiteException implements Exception {
@@ -137,6 +139,14 @@ class ApiExceptionAdapter {
     // 0. 检查内部异常是否已经是 SiteException
     if (e.error is SiteException) {
       return e.error as SiteException;
+    }
+
+    // 网络层失败时触发代理可达性探测，代理不可达则自动回退直连
+    if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.sendTimeout ||
+        e.type == DioExceptionType.receiveTimeout ||
+        e.type == DioExceptionType.connectionError) {
+      ProxyService.instance.scheduleProbeIfNeeded();
     }
 
     // 1. 超时检测

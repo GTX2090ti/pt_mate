@@ -18,7 +18,7 @@ class FieldConfig {
   final dynamic defaultValue;
   final bool required;
   final String? value;
-  final Map<String, dynamic> _json;
+  final Map<String, dynamic> json;
   final RegExp? regexpFilter;
   final String? filterFormat;
 
@@ -29,7 +29,7 @@ class FieldConfig {
     this.defaultValue,
     this.required = false,
     this.value,
-  }) : _json = {
+  }) : json = {
          'selector': ?selector,
          'attribute': ?attribute,
          'filter': ?filter,
@@ -47,7 +47,7 @@ class FieldConfig {
     this.defaultValue,
     this.required = false,
     this.value,
-    required this._json,
+    required this.json,
     this.regexpFilter,
     this.filterFormat,
   });
@@ -69,7 +69,7 @@ class FieldConfig {
   }
 
   /// 转换为 Map，用于传给 BaseWebAdapterMixin.extractFieldValue
-  Map<String, dynamic> toJson() => _json;
+  Map<String, dynamic> toJson() => json;
 
   bool get hasDefaultValue => defaultValue != null;
 
@@ -244,6 +244,16 @@ class TypedConverter {
     if (relativeUrl == null || relativeUrl.isEmpty) return '';
     if (relativeUrl.startsWith('http')) return relativeUrl;
 
+    // [移植适配-OHOS] 协议相对 URL（//host/path）：必须沿用 baseUrl 的 scheme。
+    // 早期实现只判断了 http 前缀，遇到 `//cdn.xxx.com/a.jpg` 会走下面的
+    // 相对路径分支，拼成 `https://site.com//cdn.xxx.com/a.jpg`，
+    // 图片必然加载失败。同一站点上「有的封面能显示、有的不能」多由此而来。
+    if (relativeUrl.startsWith('//')) {
+      final scheme = Uri.tryParse(baseUrl)?.scheme;
+      return '${scheme != null && scheme.isNotEmpty ? scheme : 'https'}:'
+          '$relativeUrl';
+    }
+
     final cleanBase = baseUrl.endsWith('/')
         ? baseUrl.substring(0, baseUrl.length - 1)
         : baseUrl;
@@ -336,8 +346,41 @@ class HtmlExtractor with BaseWebAdapterMixin {
         value = targetElement.text?.trim();
       } else if (config.attribute == 'href') {
         value = targetElement.attributes['href'];
+      } else if (config.attribute != null &&
+          config.attribute!.contains('|')) {
+        // [移植适配-OHOS] 属性回退：配置形如 `data-src|data-original|src`
+        // 时按序取第一个非空值。懒加载封面常把真实地址放在 data-* 上，
+        // 未进入视口时该属性为空，导致「部分种子没有封面」。
+        for (final candidate in config.attribute!.split('|')) {
+          final candidateValue = targetElement.attributes[candidate.trim()];
+          if (candidateValue != null && candidateValue.trim().isNotEmpty) {
+            value = candidateValue;
+            break;
+          }
+        }
       } else {
         value = targetElement.attributes[config.attribute ?? 'text'];
+        // [移植适配-OHOS] 通用回退：懒加载封面把真实地址放在 data-* 上，
+        // 未进入视口时该属性为空；而设备上的站点配置是从旧模板固化下来的
+        // （attribute 写死 data-src），改内置模板对已有站点无效，
+        // 因此必须在代码层兜底尝试其它常见属性。
+        if (value == null || value.trim().isEmpty) {
+          for (final candidate in const [
+            'data-src',
+            'data-original',
+            'data-url',
+            'src',
+          ]) {
+            if (candidate == config.attribute) continue;
+            final fallback = targetElement.attributes[candidate];
+            if (fallback != null &&
+                fallback.trim().isNotEmpty &&
+                !_looksLikePlaceholder(fallback)) {
+              value = fallback;
+              break;
+            }
+          }
+        }
       }
 
       if (value != null) {
@@ -352,6 +395,24 @@ class HtmlExtractor with BaseWebAdapterMixin {
     }
 
     return values;
+  }
+
+  /// 判断是否为懒加载占位图（1x1 透明图 / loading 动画 / data URI 等）。
+  /// 这类值若当成封面使用，界面上会显示成灰白块，比「不显示封面」更糟，
+  /// 因此回退时必须跳过。
+  static bool _looksLikePlaceholder(String value) {
+    final text = value.toLowerCase().trim();
+    if (text.isEmpty) return true;
+    if (text.startsWith('data:image')) return true;
+    return text.contains('loading') ||
+        text.contains('placeholder') ||
+        text.contains('blank') ||
+        text.contains('spacer') ||
+        text.contains('nopicture') ||
+        text.contains('noimage') ||
+        text.contains('default.gif') ||
+        text.contains('default.png') ||
+        text.contains('default.jpg');
   }
 
   String? _applyCompiledFilter(String value, FieldConfig config) {

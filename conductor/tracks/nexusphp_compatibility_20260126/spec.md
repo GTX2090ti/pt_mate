@@ -1,7 +1,7 @@
 # Track Specification: Improve NexusPHP Compatibility
 
 ## Overview
-The goal of this track is to make PT Mate's NexusPHP site adapters more robust and compatible with a wider range of NexusPHP-based websites. Currently, variations in HTML structure, CSS classes, and metadata presentation across different sites can lead to parsing failures.
+The goal of this track is to make PT-Mate's NexusPHP site adapters more robust and compatible with a wider range of NexusPHP-based websites. Currently, variations in HTML structure, CSS classes, and metadata presentation across different sites can lead to parsing failures.
 
 ## Objectives
 1. **Flexible Parsing**: Transition from rigid table-index-based parsing to more flexible CSS selector or attribute-based extraction.

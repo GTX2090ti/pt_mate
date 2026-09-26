@@ -1,10 +1,10 @@
-# PT Mate
+# PT-Mate
 
 [简体中文](./README.zh-CN.md)
 
-A Flutter-based private tracker client built with Material Design 3. PT Mate supports torrent browsing, search, and download management across multiple PT site types.
+A Flutter-based private tracker client built with Material Design 3. PT-Mate supports torrent browsing, search, and download management across multiple PT site types.
 
-📣 Official Telegram group: [Join the PT Mate community](https://t.me/pt_mate)
+📣 Official Telegram group: [Join the PT-Mate community](https://t.me/pt_mate)
 
 ## Features
 
@@ -47,7 +47,7 @@ The following list is based on `assets/sites/*.json` (40 total):
 
 ## Cookie Cloud Sync & Critical Security Warning
 
-PT Mate now supports **Cookie Cloud** integration, allowing you to synchronize logged-in PT site cookies from your desktop browser to PT Mate on your mobile device. This avoids tedious manual cookie copying and supports batch site import/update based on site presets.
+PT-Mate now supports **Cookie Cloud** integration, allowing you to synchronize logged-in PT site cookies from your desktop browser to PT-Mate on your mobile device. This avoids tedious manual cookie copying and supports batch site import/update based on site presets.
 
 > [!CAUTION]
 > ### ⚠️ CRITICAL SECURITY & ACCOUNT BAN WARNING (PLEASE READ CAREFULLY!)
@@ -59,8 +59,8 @@ PT Mate now supports **Cookie Cloud** integration, allowing you to synchronize l
 >    - **Highly Recommended**: ONLY use a private, self-hosted Cookie Cloud server instance (e.g., deployed via Docker on your own NAS, VPS, or private network).
 > 2. **Severe Account Ban Risks (Multi-IP & Session Hijacking Detection)**
 >    - Many Private Tracker (PT) sites enforce extremely strict security rules against simultaneous access from multiple IPs or rapid geographical relocation (e.g., cellular data vs. home broadband).
->    - If PT Mate makes requests using synced cookies over mobile networks (4G/5G/LTE) while your desktop browser is still active on home broadband, the site's security monitors might flag this as **"account sharing" or "session hijacking," resulting in an immediate and permanent account ban**.
->    - **Recommendation**: Exercise extreme caution when using PT Mate on cellular/public networks. Disable auto-sync or refresh for highly sensitive sites when not connected to your home network, or configure appropriate proxies.
+>    - If PT-Mate makes requests using synced cookies over mobile networks (4G/5G/LTE) while your desktop browser is still active on home broadband, the site's security monitors might flag this as **"account sharing" or "session hijacking," resulting in an immediate and permanent account ban**.
+>    - **Recommendation**: Exercise extreme caution when using PT-Mate on cellular/public networks. Disable auto-sync or refresh for highly sensitive sites when not connected to your home network, or configure appropriate proxies.
 > 3. **Encryption is Not Invulnerable**
 >    - Although Cookie Cloud uses client-side encryption (AES via key derivation from UUID and password), weak UUIDs or short passwords can still be brute-forced. Always use strong, complex sync credentials.
 > 4. **Exceeded Scope Risk (Not Limited to PT Sites)**
@@ -94,7 +94,7 @@ git config core.hooksPath .githooks
 ## iOS Sideloading Source
 
 SideStore:
-[Add PT Mate Source](https://intradeus.github.io/http-protocol-redirector?r=sidestore://source?url=https://raw.githubusercontent.com/JustLookAtNow/pt_mate/refs/heads/master/altsource/AltSource.json)
+[Add PT-Mate Source](https://intradeus.github.io/http-protocol-redirector?r=sidestore://source?url=https://raw.githubusercontent.com/JustLookAtNow/pt_mate/refs/heads/master/altsource/AltSource.json)
 
 Direct source URL:
 

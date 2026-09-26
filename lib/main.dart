@@ -13,51 +13,59 @@ void main() async {
     () async {
       WidgetsFlutterBinding.ensureInitialized();
 
-      String? secureStorageFailureCode;
-      try {
-        await StorageService.instance.initializeSecureStorage();
-      } on SecureStorageUnavailableException catch (error) {
-        secureStorageFailureCode = error.code;
-      } catch (error) {
-        secureStorageFailureCode = error.runtimeType.toString();
-      }
-
-      final enabled = await StorageService.instance.loadLogToFileEnabled();
-      await LogFileService.instance.init(enabled: enabled);
-      await StorageService.instance.loadVisibleTags();
-
-      if (secureStorageFailureCode != null) {
-        LogFileService.instance.append(
-          'Secure storage '
-          'profile=${StorageService.instance.secureStorageProfile?.name ?? 'unknown'}, '
-          'state=${StorageService.instance.secureStorageState.name}, '
-          'stage=${StorageService.instance.secureStorageFailureStage?.name ?? 'unknown'}, '
-          'type=${StorageService.instance.secureStorageFailureType ?? 'unknown'}, '
-          'code=$secureStorageFailureCode',
-        );
-      }
-
-      // 代理密码依赖安全存储，预检失败时不得初始化代理。
-      if (StorageService.instance.canAccessSensitiveStorage) {
+      // [移植适配-OHOS] 启动阶段单步超时护栏。
+      // 鸿蒙侧部分平台通道（如 flutter_secure_storage）没有原生实现时，
+      // 调用会永久挂起且不抛异常。这里给每一步加超时，保证 runApp 一定能执行。
+      Future<void> guardedStartupStep(
+        String name,
+        Future<void> Function() body,
+      ) async {
         try {
-          await ProxyService.instance.init();
-        } on SecureStorageUnavailableException catch (error) {
-          ProxyService.instance
-            ..isProxyEnabled = false
-            ..proxyUsername = ''
-            ..proxyPassword = '';
+          await body().timeout(const Duration(milliseconds: 1200));
+        } catch (error) {
           LogFileService.instance.append(
-            'Secure storage '
-            'profile=${StorageService.instance.secureStorageProfile?.name ?? 'unknown'}, '
-            'state=${StorageService.instance.secureStorageState.name}, '
-            'stage=${StorageService.instance.secureStorageFailureStage?.name ?? 'unknown'}, '
-            'type=${StorageService.instance.secureStorageFailureType ?? 'unknown'}, '
-            'code=${error.code}',
+            'startup step "$name" failed: $error',
           );
         }
       }
 
+      String? secureStorageFailureCode;
+      await guardedStartupStep('initializeSecureStorage', () async {
+        try {
+          await StorageService.instance.initializeSecureStorage();
+        } on SecureStorageUnavailableException catch (error) {
+          secureStorageFailureCode = error.code;
+        } catch (error) {
+          secureStorageFailureCode = error.runtimeType.toString();
+        }
+      });
+
+      // [移植适配-OHOS] 首帧优先：先 runApp，其余初始化放后台，避免白屏。
       runApp(const MTeamApp());
+
+      unawaited(guardedStartupStep('loadLogToFileEnabled', () async {
+        final enabled = await StorageService.instance.loadLogToFileEnabled();
+        await LogFileService.instance.init(enabled: enabled);
+        if (secureStorageFailureCode != null) {
+          LogFileService.instance.append(
+            'Secure storage '
+            'profile=${StorageService.instance.secureStorageProfile?.name ?? 'unknown'}, '
+            'state=${StorageService.instance.secureStorageState.name}, '
+            'code=$secureStorageFailureCode',
+          );
+        }
+      }));
+
+      unawaited(guardedStartupStep('loadVisibleTags', () async {
+        await StorageService.instance.loadVisibleTags();
+      }));
+
+      // 代理密码依赖安全存储，预检失败时不得初始化代理。
+      if (StorageService.instance.canAccessSensitiveStorage) {
+        unawaited(guardedStartupStep('ProxyService.init', () async {
+          await ProxyService.instance.init();
+        }));
+      }
     },
     (error, stack) {
       if (!kIsWeb && kDebugMode) {

@@ -1,4 +1,4 @@
-#define MyAppName "PT Mate"
+#define MyAppName "PT-Mate"
 #define MyAppPublisher "fly2sky"
 #define MyAppURL "https://github.com/JustLookAtNow/pt_mate"
 #define MyAppExeName "pt_mate.exe"
