@@ -357,7 +357,7 @@ class StorageService {
   static final Object _linuxPlaintextFallbackReplayZoneKey = Object();
   static final Object _secureStorageFailureStageZoneKey = Object();
   static final Object _legacySecureValuesZoneKey = Object();
-  static const Duration _secureStorageTimeout = Duration(milliseconds: 800);
+  static const Duration _secureStorageTimeout = Duration(seconds: 5);
   static const Duration _secureStorageInitializationTimeout = Duration(
     seconds: 5,
   );

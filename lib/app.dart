@@ -1488,7 +1488,9 @@ class MTeamAppState extends State<MTeamApp> with WidgetsBindingObserver {
         initializedDuringResume = true;
       }
 
-      await storage.initializeSecureStorage(force: true);
+      // 前台恢复只做轻量预检，不 force 重初始化：force 会
+      // generation++，使正在进行的站点刷新/同步全部 invalidated。
+      await storage.initializeSecureStorage(force: false);
       if (!storage.canAccessSensitiveStorage) {
         throw SecureStorageUnavailableException(
           storage.secureStorageFailureCode ?? 'secure_storage_not_ready',
