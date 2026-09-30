@@ -2,7 +2,7 @@
 
 基于 [JustLookAtNow/pt_mate](https://github.com/JustLookAtNow/pt_mate) 适配的 **HarmonyOS 鸿蒙原生版本**，Flutter 3.41.10-ohos 构建，仅供个人自用，在原版基础上添加了多项下载管理与使用体验增强功能。
 
-📦 安装包（未签名 HAP）见本仓库 [Releases](https://github.com/GTX2090ti/pt_mate/releases)，当前版本 **ohos-v1.1.0**。
+📦 安装包（未签名 HAP）见本仓库 [Releases](https://github.com/GTX2090ti/pt_mate-harmonyos/releases)，当前版本 **ohos-v1.1.0**。
 
 ## 鸿蒙化适配
 
