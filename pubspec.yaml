@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 2.29.1-beta+189
+version: 2.29.2+190
 
 environment:
   # [移植适配-OHOS] 上游要求 Dart 3.13；鸿蒙定制 SDK 暂无 Dart≥3.13 版本，暂放宽到 ^3.11.0，升级工具链后恢复。
@@ -39,11 +39,11 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   provider: ^6.1.2
-  dio: ^5.7.0
+  dio: ^5.11.1
   shared_preferences: ^2.3.2
   path_provider: ^2.1.4
-  permission_handler: ^13.0.1
-  flutter_secure_storage: ^11.0.0
+  permission_handler: ^13.0.2
+  flutter_secure_storage: ^11.2.0
   intl: ^0.20.2
   http_parser: ^4.1.0
   dynamic_color: ^1.7.0

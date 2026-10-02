@@ -242,14 +242,16 @@ class LocalDownloadService with TorrentFileDownloaderMixin {
     List<int> data,
   ) async {
     try {
-      return await _androidDownloadsChannel
-              .invokeMethod<String>('saveToDownloads', {
-                'fileName': fileName,
-                'bytes': Uint8List.fromList(data),
-                'mimeType': fileName.toLowerCase().endsWith('.zip')
-                    ? 'application/zip'
-                    : 'application/x-bittorrent',
-              }) ??
+      return await _androidDownloadsChannel.invokeMethod<String>(
+            'saveToDownloads',
+            {
+              'fileName': fileName,
+              'bytes': Uint8List.fromList(data),
+              'mimeType': fileName.toLowerCase().endsWith('.zip')
+                  ? 'application/zip'
+                  : 'application/x-bittorrent',
+            },
+          ) ??
           '$downloadsDisplayPath/$fileName';
     } on MissingPluginException catch (e) {
       if (kDebugMode) {

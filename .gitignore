@@ -63,3 +63,7 @@ server/curl-test.sh
 ohos/.codegenie/
 ohos/HoKit/
 
+
+# 本地发布产物（HAP 等）
+/release/
+

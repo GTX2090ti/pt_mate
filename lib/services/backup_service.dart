@@ -193,6 +193,7 @@ class BackupService {
           'defaultDownloadTags',
           _storageService.loadDefaultDownloadTags,
         ),
+        'autoAddSiteTag': await _storageService.loadAutoAddSiteTag(),
         'savePath': await _storageService.loadDefaultDownloadSavePath(),
       },
       'proxy': {
@@ -561,7 +562,8 @@ class BackupService {
     Map<String, dynamic> data, {
     required List<Map<String, dynamic>>? sanitizedDownloaderConfigs,
   }) {
-    final snapshot = <String, dynamic>{};
+    // 旧备份没有此字段时恢复为默认关闭，避免保留当前的开启状态。
+    final snapshot = <String, dynamic>{'autoAddSiteTag': false};
     final activeSiteId = data['activeSiteId'];
     if (activeSiteId != null) snapshot['activeSiteId'] = activeSiteId as String;
 
@@ -586,6 +588,9 @@ class BackupService {
       final downloadSettings =
           preferences['defaultDownloadSettings'] as Map<String, dynamic>?;
       if (downloadSettings != null) {
+        if (downloadSettings.containsKey('autoAddSiteTag')) {
+          snapshot['autoAddSiteTag'] = downloadSettings['autoAddSiteTag'];
+        }
         if (downloadSettings['category'] != null) {
           snapshot['defaultDownloadCategory'] =
               downloadSettings['category'] as String;

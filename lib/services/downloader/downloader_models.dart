@@ -15,6 +15,12 @@ enum DownloaderType {
   final String value;
   final String displayName;
 
+  /// 是否支持独立于分类的任务标签。
+  bool get supportsTags => switch (this) {
+    DownloaderType.qbittorrent || DownloaderType.transmission => true,
+    DownloaderType.rutorrent => false,
+  };
+
   static DownloaderType fromString(String value) {
     for (final type in DownloaderType.values) {
       if (type.value == value) {
@@ -238,6 +244,22 @@ class AddTaskParams {
     this.autoTMM,
     this.startPaused,
   });
+
+  AddTaskParams copyWith({
+    String? url,
+    String? category,
+    List<String>? tags,
+    String? savePath,
+    bool? autoTMM,
+    bool? startPaused,
+  }) => AddTaskParams(
+    url: url ?? this.url,
+    category: category ?? this.category,
+    tags: tags ?? this.tags,
+    savePath: savePath ?? this.savePath,
+    autoTMM: autoTMM ?? this.autoTMM,
+    startPaused: startPaused ?? this.startPaused,
+  );
 
   factory AddTaskParams.fromJson(Map<String, dynamic> json) {
     return AddTaskParams(
